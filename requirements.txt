@@ -1,13 +1,9 @@
 
---find-links https://download.pytorch.org/whl/torch_stable.html
-
 git+https://github.com/nghorbani/body_visualizer
 git+https://github.com/MPI-IS/configer.git
 git+https://github.com/MPI-IS/mesh.git
 git+https://github.com/nghorbani/human_body_prior.git
 
-torch==1.10.1+cu102
-torchtext
 nltk
 matplotlib
 opencv-python
