@@ -1106,15 +1106,21 @@ def aggreg_fbp_intptt_based(posecodes_1p, extra_verbose=False):
     if extra_verbose: print("Aggregations to perform:", aggregs_to_perform)
     updated_posecodes = []
     for agg in aggregs_to_perform:
+        # get related code indices
+        if agg[0] == "intptt":
+            p_inds = intptt_a[agg[1]]
+        elif agg[0] == "fbp":
+            p_inds = fbp_a[agg[1]]
+        # aggregate
         if random.random() < PROP_AGGREGATION_HAPPENS: 
             if agg[0] == "intptt":
                 # perform the interpretation-based aggregation
                 # agg[1]: (size 3) interpretation id, side2, body_part2
-                new_posecode = [MULTIPLE_SUBJECTS_KEY, [posecodes_1p[p_ind][:2] for p_ind in intptt_a[agg[1]]]] + list(agg[1])
+                new_posecode = [MULTIPLE_SUBJECTS_KEY, [posecodes_1p[p_ind][:2] for p_ind in p_inds]] + list(agg[1])
             elif agg[0] == "fbp":
                 # perform the focus-body-part-based aggregation
                 # agg[1]: (size 2) side1, body_part1
-                new_posecode = [JOINT_BASED_AGGREG_KEY, list(agg[1]), [posecodes_1p[p_ind][2] for p_ind in fbp_a[agg[1]]], [posecodes_1p[p_ind][3:] for p_ind in fbp_a[agg[1]]]]
+                new_posecode = [JOINT_BASED_AGGREG_KEY, list(agg[1]), [posecodes_1p[p_ind][2] for p_ind in p_inds], [posecodes_1p[p_ind][3:] for p_ind in p_inds]]
                 # if performing interpretation-fusion, it should happen here
                 # ie. ['<joint_based_aggreg>', ['right', 'arm'], [16, 9, 15], [['left', 'arm'], ['left', 'arm'], ['left', 'arm']]], 
                 # which leads to "the right arm is behind the left arm, spread far apart from the left arm, above the left arm"
@@ -1122,6 +1128,11 @@ def aggreg_fbp_intptt_based(posecodes_1p, extra_verbose=False):
                 # CONDITION: the second body part is not None, and is the same for at least 2 interpretations
                 # CAUTION: one should avoid mixing "it" words refering to BP2 with "it" words refering to BP1...
             updated_posecodes.append(new_posecode)
+        else:
+            # if the posecodes at stake could not be aggregated, put them back
+            # in the pool of posecodes
+            for p_ind in p_inds:
+                unavailable_p_inds.remove(p_ind)
     if extra_verbose:
         print("Posecodes from interpretation/joint-based aggregations:")
         for p in updated_posecodes:
