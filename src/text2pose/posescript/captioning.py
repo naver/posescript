@@ -1,9 +1,10 @@
 ##############################################################
 ## PoseScript                                               ##
-## Copyright (c) 2022-present                               ##
+## Copyright (c) 2022, 2023                                 ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
-## Naver Corporation                                        ##
-## CC BY-NC-SA 4.0                                          ##
+## and Naver Corporation                                    ##
+## Licensed under the CC BY-NC-SA 4.0 license.              ##
+## See project root for license details.                    ##
 ##############################################################
 
 # requires at least Python 3.6 (order preserved in dicts)
@@ -18,82 +19,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tabulate import tabulate
 
-from text2pose.posescript.posecodes import POSECODE_OPERATORS, distance_between_joint_pairs
+from text2pose.posescript.posecodes import POSECODE_OPERATORS
 from text2pose.posescript.captioning_data import *
+from text2pose.posescript.utils import *
 
 
 ################################################################################
 ## UTILS
 ################################################################################
-
-def flatten_list(l):
-    return [item for sublist in l for item in sublist]
-
-def list_remove_duplicate_preserve_order(seq):
-    seen = set()
-    seen_add = seen.add
-    return [x for x in seq if not (x in seen or seen_add(x))]
-
-# (SMPL-H) skeleton (22 main body + 2*15 hands), from https://meshcapade.wiki/SMPL#skeleton-layout
-ALL_JOINT_NAMES = [
-    'pelvis',
-    'left_hip',
-    'right_hip',
-    'spine1',
-    'left_knee',
-    'right_knee',
-    'spine2',
-    'left_ankle',
-    'right_ankle',
-    'spine3',
-    'left_foot',
-    'right_foot',
-    'neck',
-    'left_collar',
-    'right_collar',
-    'head',
-    'left_shoulder',
-    'right_shoulder',
-    'left_elbow',
-    'right_elbow',
-    'left_wrist',
-    'right_wrist',
-    'left_index1',
-    'left_index2',
-    'left_index3',
-    'left_middle1',
-    'left_middle2',
-    'left_middle3',
-    'left_pinky1',
-    'left_pinky2',
-    'left_pinky3',
-    'left_ring1',
-    'left_ring2',
-    'left_ring3',
-    'left_thumb1',
-    'left_thumb2',
-    'left_thumb3',
-    'right_index1',
-    'right_index2',
-    'right_index3',
-    'right_middle1',
-    'right_middle2',
-    'right_middle3',
-    'right_pinky1',
-    'right_pinky2',
-    'right_pinky3',
-    'right_ring1',
-    'right_ring2',
-    'right_ring3',
-    'right_thumb1',
-    'right_thumb2',
-    'right_thumb3',
-]
-
-# Joints that are actually useful for the captioning pipeline
-VIRTUAL_JOINTS = ["left_hand", "right_hand", "torso"] # ADD_VIRTUAL_JOINT
-JOINT_NAMES = ALL_JOINT_NAMES[:22] + ['left_middle2', 'right_middle2'] + VIRTUAL_JOINTS
-JOINT_NAMES2ID = {jn:i for i, jn in enumerate(JOINT_NAMES)}
 
 # Interpretation set (interpretations from the posecode operators + (new
 # distinct) interpretations from the set of super-posecodes)
@@ -101,38 +34,40 @@ JOINT_NAMES2ID = {jn:i for i, jn in enumerate(JOINT_NAMES)}
 # convert operator-specific interpretation ids to global interpretation ids,
 # using offsets ; as well as the order of super-posecode interpretations, for 
 # compatibility accross runs)
-INTERPRETATION_SET = flatten_list([p["category_names"] for p in POSECODE_OPERATORS_VALUES.values()])
-sp_interpretation_set = [v[1][1] for v in SUPER_POSECODES if v[1][1] not in INTERPRETATION_SET]
-INTERPRETATION_SET += list_remove_duplicate_preserve_order(sp_interpretation_set)
-INTPTT_NAME2ID = {intptt_name:i for i, intptt_name in enumerate(INTERPRETATION_SET)}
+POSECODE_INTERPRETATION_SET = flatten_list([p["category_names"] for p in POSECODE_OPERATORS_VALUES.values()])
+sp_POSECODE_INTERPRETATION_SET = [v[1][1] for v in SUPER_POSECODES if v[1][1] not in POSECODE_INTERPRETATION_SET]
+POSECODE_INTERPRETATION_SET += list_remove_duplicate_preserve_order(sp_POSECODE_INTERPRETATION_SET)
+POSECODE_INTPTT_NAME2ID = {intptt_name:i for i, intptt_name in enumerate(POSECODE_INTERPRETATION_SET)}
 
 # Data to reverse subjects & select template sentences
-OPPOSITE_CORRESP_ID = {INTPTT_NAME2ID[k]:INTPTT_NAME2ID[v] for k, v in OPPOSITE_CORRESP.items()}
-OK_FOR_1CMPNT_OR_2CMPNTS_IDS = [INTPTT_NAME2ID[n] for n in OK_FOR_1CMPNT_OR_2CMPNTS]
+OPPOSITE_CORRESP_ID = {POSECODE_INTPTT_NAME2ID[k]:POSECODE_INTPTT_NAME2ID[v] for k, v in OPPOSITE_CORRESP.items()}
+OK_FOR_1CMPNT_OR_2CMPNTS_IDS = [POSECODE_INTPTT_NAME2ID[n] for n in OK_FOR_1CMPNT_OR_2CMPNTS]
 
 ################################################################################
 ## MAIN
 ################################################################################
 
-def main(coords, save_dir, babel_info=False, simplified_captions=False,
+def main(coords, save_dir=None, babel_info=False, simplified_captions=False,
         apply_transrel_ripple_effect=True, apply_stat_ripple_effect=True,
         random_skip=True, verbose=True):
 
-    if verbose: print("Formating input...")
     # Select & complete joint coordinates (prosthesis phalanxes, virtual joints)
+    if verbose: print("Formating input...")
     coords = prepare_input(coords)
+
     # Prepare posecode queries
     # (hold all info about posecodes, essentially using ids)
     p_queries = prepare_posecode_queries()
     sp_queries = prepare_super_posecode_queries(p_queries)
 
-    if verbose: print("Eval & interprete & elect eligible posecodes...")
     # Eval & interprete & elect eligible elementary posecodes
+    if verbose: print("Eval & interprete & elect eligible posecodes...")
     p_interpretations, p_eligibility = infer_posecodes(coords, p_queries, sp_queries, verbose=verbose)
     # save
-    saved_filepath = os.path.join(save_dir, "posecodes_intptt_eligibility.pt")
-    torch.save([p_interpretations, p_eligibility, INTPTT_NAME2ID], saved_filepath)
-    print("Saved file:", saved_filepath)
+    if save_dir:
+        saved_filepath = os.path.join(save_dir, "posecodes_intptt_eligibility.pt")
+        torch.save([p_interpretations, p_eligibility, POSECODE_INTPTT_NAME2ID], saved_filepath)
+        print("Saved file:", saved_filepath)
 
     # Format posecode for future steps & apply random skip
     if verbose: print("Formating posecodes...")
@@ -143,24 +78,27 @@ def main(coords, save_dir, babel_info=False, simplified_captions=False,
                                                             random_skip,
                                                             verbose = verbose)
     # save
-    saved_filepath = os.path.join(save_dir, "posecodes_formated.pt")
-    torch.save([posecodes, posecodes_skipped], saved_filepath)
-    print("Saved file:", saved_filepath)
+    if save_dir:
+        saved_filepath = os.path.join(save_dir, "posecodes_formated.pt")
+        torch.save([posecodes, posecodes_skipped], saved_filepath)
+        print("Saved file:", saved_filepath)
 
     # Aggregate & discard posecodes (leverage relations)
     if verbose: print("Aggregating posecodes...")
     posecodes = aggregate_posecodes(posecodes,
                                     simplified_captions,
                                     apply_transrel_ripple_effect,
-                                    apply_stat_ripple_effect)
+                                    apply_stat_ripple_effect,
+                                    verbose = verbose)
     # save
-    saved_filepath = os.path.join(save_dir, "posecodes_aggregated.pt")
-    torch.save(posecodes, saved_filepath)
-    print("Saved file:", saved_filepath)
+    if save_dir:
+        saved_filepath = os.path.join(save_dir, "posecodes_aggregated.pt")
+        torch.save(posecodes, saved_filepath)
+        print("Saved file:", saved_filepath)
 
     # Produce descriptions
     if verbose: print("Producing descriptions...")
-    descriptions, determiners = convert_posecodes(posecodes, simplified_captions)
+    descriptions, determiners = convert_posecodes(posecodes, simplified_captions, verbose=verbose)
     if babel_info:
         added_babel_sent = 0
         for i in range(len(descriptions)):
@@ -177,76 +115,21 @@ def main(coords, save_dir, babel_info=False, simplified_captions=False,
             descriptions[i] = babel_info[i] + descriptions[i]
         if verbose: print(f"Added {added_babel_sent} new sentences using information extracted from BABEL.")
 
-    # save
-    saved_filepath = os.path.join(save_dir, "descriptions.json")
     descriptions = {i:descriptions[i] for i in range(len(descriptions))}
-    with open(saved_filepath, "w") as f:
-        json.dump(descriptions, f, indent=4, sort_keys=True)
-    print("Saved file:", saved_filepath)
-    # torch.save(descriptions, saved_filepath)
+    
+    # save
+    if save_dir:
+        saved_filepath = os.path.join(save_dir, "descriptions.json")
+        with open(saved_filepath, "w") as f:
+            json.dump(descriptions, f, indent=4, sort_keys=True)
+        print("Saved file:", saved_filepath)
+
+    return descriptions
     
 
 ################################################################################
 ## PREPARE INPUT
 ################################################################################
-
-ALL_JOINT_NAMES2ID = {jn:i for i, jn in enumerate(ALL_JOINT_NAMES)}
-
-
-def compute_wrist_middle2ndphalanx_distance(coords):
-    x = distance_between_joint_pairs([
-        [ALL_JOINT_NAMES2ID["left_middle2"], ALL_JOINT_NAMES2ID["left_wrist"]],
-        [ALL_JOINT_NAMES2ID["right_middle2"], ALL_JOINT_NAMES2ID["right_wrist"]]], coords)
-    return x.mean().item()
-
-
-def prepare_input(coords):
-    """
-    Select coordinates for joints of interest, and complete thems with the
-    coordinates of virtual joints. If coordinates are provided for the main 22
-    joints only, add a prosthesis 2nd phalanx to the middle L&R fingers, in the
-    continuity of the forearm.
-    
-    Args:
-        coords (torch.tensor): size (nb of poses, nb of joints, 3), coordinates
-            of the different joints, for several poses; with joints being all
-            of those defined in ALL_JOINT_NAMES or just the first 22 joints.
-    
-    Returns:
-        (torch.tensor): size (nb of poses, nb of joints, 3), coordinates
-            of the different joints, for several poses; with the joints being
-            those defined in JOINT_NAMES
-    """
-    nb_joints = coords.shape[1]
-    ### get coords of necessary existing joints
-    if nb_joints == 22:
-        # add prosthesis phalanxes
-        # distance to the wrist
-        x = 0.1367 # found by running compute_wrist_middle2ndphalanx_distance on the 52-joint sized coords of a 20k-pose set
-        # direction from the wrist (vectors), in the continuity of the forarm
-        left_v = coords[:,ALL_JOINT_NAMES2ID["left_wrist"]] - coords[:,ALL_JOINT_NAMES2ID["left_elbow"]]
-        right_v = coords[:,ALL_JOINT_NAMES2ID["right_wrist"]] - coords[:,ALL_JOINT_NAMES2ID["right_elbow"]]
-        # new phalanx coordinate
-        added_j = [x*left_v/torch.linalg.norm(left_v, axis=1).view(-1,1) \
-                        + coords[:,ALL_JOINT_NAMES2ID["left_wrist"]],
-                    x*right_v/torch.linalg.norm(right_v, axis=1).view(-1,1) \
-                        + coords[:,ALL_JOINT_NAMES2ID["right_wrist"]]]
-        added_j = [aj.view(-1, 1, 3) for aj in added_j]
-        coords = torch.cat([coords] + added_j, axis=1) # concatenate along the joint axis
-    if nb_joints >= 52:
-        # remove unecessary joints
-        keep_joints_indices = [ALL_JOINT_NAMES2ID[jn] for jn in JOINT_NAMES[:-len(VIRTUAL_JOINTS)]]
-        coords = coords[:,keep_joints_indices]
-    ### add virtual joints
-    added_j = [0.5*(coords[:,JOINT_NAMES2ID["left_wrist"]] + coords[:,JOINT_NAMES2ID["left_middle2"]]), # left hand
-                0.5*(coords[:,JOINT_NAMES2ID["right_wrist"]] + coords[:,JOINT_NAMES2ID["right_middle2"]]), # right hand
-                1/3*(coords[:,JOINT_NAMES2ID["pelvis"]] + coords[:,JOINT_NAMES2ID["neck"]] + coords[:,JOINT_NAMES2ID["spine3"]]), # torso
-                # ADD_VIRTUAL_JOINT
-                ]
-    added_j = [aj.view(-1, 1, 3) for aj in added_j]
-    coords = torch.cat([coords] + added_j, axis=1) # concatenate along the joint axis
-    return coords
-
 
 def prepare_posecode_queries():
     """
@@ -267,6 +150,8 @@ def prepare_posecode_queries():
         have empty list)
     - the list of support-II interpretation ids for each jointset (possible to
         have empty list)
+    - the list of absolute interpretations ids for each jointset (possible to 
+        have empty list)
     - the name of the main focus body part for each jointset
     - the offset to convert the interpretation ids (valid in the scope of the
         considered posecode operator) to global interpretation ids
@@ -274,20 +159,24 @@ def prepare_posecode_queries():
     posecode_queries = {}
     offset = 0
     for posecode_kind, posecode_list in ALL_ELEMENTARY_POSECODES.items():
-        # fill in the blanks for acceptable interpretation (when defining posecodes, '[]' means that all operator interpretation are actually acceptable)
-        acceptable_intptt_names = [p[2] if p[2] else POSECODE_OPERATORS_VALUES[posecode_kind]['category_names'] for p in posecode_list]
+        # fill in the blanks for acceptable interpretation (when defining posecodes, 'ALL' means that all operator interpretation are actually acceptable)
+        acceptable_intptt_names = [p[2] if p[2]!=['ALL'] \
+                                   else [c for c in POSECODE_OPERATORS_VALUES[posecode_kind]['category_names'] if 'ignored' not in c] \
+                                    for p in posecode_list]
         
         # parse information about the different posecodes
         joint_ids = torch.tensor([[JOINT_NAMES2ID[jname] for jname in p[0]]
                                     if type(p[0])!=str else JOINT_NAMES2ID[p[0]]
                                     for p in posecode_list]).view(len(posecode_list), -1)
-        acceptable_intptt_ids = [[INTPTT_NAME2ID[ain_i] for ain_i in ain]
+        acceptable_intptt_ids = [[POSECODE_INTPTT_NAME2ID[ain_i] for ain_i in ain]
                                     for ain in acceptable_intptt_names]
-        rare_intptt_ids = [[INTPTT_NAME2ID[rin_i] for rin_i in p[3]]
+        rare_intptt_ids = [[POSECODE_INTPTT_NAME2ID[rin_i] for rin_i in p[3]]
                                     for p in posecode_list]
-        support_intptt_ids_typeI = [[INTPTT_NAME2ID[sin_i[0]] for sin_i in p[4] if sin_i[1]==1]
+        support_intptt_ids_typeI = [[POSECODE_INTPTT_NAME2ID[sin_i[0]] for sin_i in p[4] if sin_i[1]==1]
                                     for p in posecode_list]
-        support_intptt_ids_typeII = [[INTPTT_NAME2ID[sin_i[0]] for sin_i in p[4] if sin_i[1]==2]
+        support_intptt_ids_typeII = [[POSECODE_INTPTT_NAME2ID[sin_i[0]] for sin_i in p[4] if sin_i[1]==2]
+                                    for p in posecode_list]
+        absolute_intptt_ids = [[POSECODE_INTPTT_NAME2ID[bin_i] for bin_i in p[5]]
                                     for p in posecode_list]
 
         # sanity checks
@@ -312,10 +201,11 @@ def prepare_posecode_queries():
             "rare_intptt_ids": rare_intptt_ids,
             "support_intptt_ids_typeI": support_intptt_ids_typeI,
             "support_intptt_ids_typeII": support_intptt_ids_typeII,
+            "absolute_intptt_ids": absolute_intptt_ids,
             "focus_body_part": [p[1] for p in posecode_list],
             "offset": offset,
         }
-        offset += len(POSECODE_OPERATORS_VALUES[posecode_kind]['category_names'])
+        offset += len(POSECODE_OPERATORS_VALUES[posecode_kind]['category_names']) # works because category names are all unique for elementary posecodes
     return posecode_queries
 
 
@@ -333,7 +223,7 @@ def prepare_super_posecode_queries(p_queries):
         - the expected interpretation id to search in this column
     - a boolean indicating whether this is a rare posecode
     - the interpretation id of the super-posecode
-    - the focus body part name for the super-posecode
+    - the name of the focus body part or the joints for the super-posecode
     """
     super_posecode_queries = {}
     for sp in SUPER_POSECODES:
@@ -353,7 +243,6 @@ def prepare_super_posecode_queries(p_queries):
                 # represented by the index of the posecode instead of the tensor
                 # of the joint ids.
                 # 1) convert joint names to joint ids
-                # req_p_js = torch.tensor([JOINT_NAMES2ID[jname] for jname in req_p[1]])
                 req_p_js = torch.tensor([JOINT_NAMES2ID[jname] for jname in req_p[1]]
                                     if type(req_p[1])!=str else [JOINT_NAMES2ID[req_p[1]]]).view(1,-1)
                 # 2) search for the index of the posecode represented by this
@@ -367,13 +256,14 @@ def prepare_super_posecode_queries(p_queries):
                     sys.exit()
                 # 3) convert the interpretation to an id, and 4) add the
                 # posecode requirement to the list thereof
-                w_info.append([req_p[0], req_p_ind, INTPTT_NAME2ID[req_p[2]]])
+                w_info.append([req_p[0], req_p_ind, POSECODE_INTPTT_NAME2ID[req_p[2]]])
             required_posecodes.append(w_info)
         # save super-posecode information
         super_posecode_queries[sp_id] = {
             "required_posecodes":required_posecodes,
             "is_rare": sp[2],
-            "intptt_id": INTPTT_NAME2ID[sp[1][1]],
+            "is_absolute": sp[3],
+            "intptt_id": POSECODE_INTPTT_NAME2ID[sp[1][1]],
             "focus_body_part": sp[1][0]
         }
     return super_posecode_queries
@@ -397,7 +287,7 @@ def infer_posecodes(coords, p_queries, sp_queries, verbose = True):
         # thresholds, or, more conveniently, simply randomize a bit the
         # evaluations: add or subtract up to the maximum authorized random
         # offset to the measured values.
-        val += (torch.rand(val.shape)*2-1) * p_operator.random_max_offset
+        val = p_operator.randomize(val)
         # interprete the measured values
         p_intptt = p_operator.interprete(val) + p_queries[p_kind]["offset"]
         # infer posecode eligibility for description
@@ -407,8 +297,7 @@ def infer_posecodes(coords, p_queries, sp_queries, verbose = True):
             intptt_r = torch.tensor(p_queries[p_kind]["rare_intptt_ids"][js])
             # * fill with 1 if the measured interpretation is one of the
             #   acceptable ones,
-            # * fill with 2 if, in addition, it is one of the nonskippables
-            #   ones,
+            # * fill with 2 if, in addition, it is one of the nonskippable ones,
             # * fill with 0 otherwise
             # * Note that support interpretations are necessarily acceptable
             #   interpretations (otherwise they would not make it to the
@@ -458,7 +347,7 @@ def infer_posecodes(coords, p_queries, sp_queries, verbose = True):
                     # possible production recipe for the given super-posecode)
                     selected_poses = torch.logical_and(sp_elig[:, sp_ind], (p_interpretations[ep[0]][:,ep[1]] == ep[2]))
                 else:
-                    # this posecode interpretation is not a support one
+                    # this posecode interpretation is not a support one (-I/-II)
                     # its eligibility must not change
                     continue
                 p_eligibility[ep[0]][selected_poses, ep[1]] = 0
@@ -481,55 +370,6 @@ def infer_posecodes(coords, p_queries, sp_queries, verbose = True):
 ################################################################################
 ## FORMAT POSECODES
 ################################################################################
-
-def parse_joint(joint_name):
-    # returns side, body_part
-    x = joint_name.split("_")
-    return x if len(x) == 2 else [None] + x
-
-
-def parse_super_posecode_joints(sp_id, sp_queries):
-    # only a focus body part
-    side_1, body_part_1 = parse_joint(sp_queries[sp_id]['focus_body_part'])
-    return side_1, body_part_1, None, None
-
-
-def parse_posecode_joints(p_ind, p_kind, p_queries):
-    # get the side & body part of the joints involved in the posecode
-    focus_joint = p_queries[p_kind]['focus_body_part'][p_ind]
-    # first (main) joint
-    if focus_joint is None:
-        # no main joint is defined
-        bp1_name = JOINT_NAMES[p_queries[p_kind]['joint_ids'][p_ind][0]] # first joint
-        side_1, body_part_1 = parse_joint(bp1_name)
-    else:
-        side_1, body_part_1 = parse_joint(focus_joint)
-    # second (support) joint
-    if p_kind in POSECODE_KIND_FOCUS_JOINT_BASED:
-        # no second joint involved
-        side_2, body_part_2 = None, None
-    else:
-        bp2_name = JOINT_NAMES[p_queries[p_kind]['joint_ids'][p_ind][1]] # second joint
-        side_2, body_part_2 = parse_joint(bp2_name)
-    return side_1, body_part_1, side_2, body_part_2
-
-
-def add_posecode(data, skipped, p, p_elig_val, random_skip, nb_skipped,
-                side_1, body_part_1, side_2, body_part_2, intptt_id,
-                extra_verbose=False):
-    # always consider rare posecodes (p_elig_val=2),
-    # and randomly ignore skippable ones, up to PROP_SKIP_POSECODES,
-    # if applying random skip
-    if (p_elig_val == 2) or \
-        (p_elig_val and (not random_skip or random.random() >= PROP_SKIP_POSECODES)):
-        data[p].append([side_1, body_part_1, intptt_id, side_2, body_part_2]) # deal with interpretation ids for now
-        if extra_verbose and p_elig_val == 2: print("NON SKIPPABLE", data[p][-1])
-    elif random_skip and p_elig_val:
-        skipped[p].append([side_1, body_part_1, intptt_id, side_2, body_part_2])
-        nb_skipped += 1
-        if extra_verbose: print("skipped", [side_1, body_part_1, intptt_id, side_2, body_part_2])
-    return data, skipped, nb_skipped
-
 
 def format_and_skip_posecodes(p_interpretations, p_eligibility, p_queries, sp_queries,
                                 random_skip, verbose=True, extra_verbose=False):
@@ -567,15 +407,16 @@ def format_and_skip_posecodes(p_interpretations, p_eligibility, p_queries, sp_qu
         nb_nonskippable += (p_elig==2).sum().item()
         for pc in range(p_intptt.shape[1]): # iterate over posecodes
             # get the side & body part of the joints involved in the posecode
-            side_1, body_part_1, side_2, body_part_2 = parse_posecode_joints(pc, p_kind, p_queries)
+            side_1, body_part_1, side_2, body_part_2 = parse_code_joints(pc, p_kind, p_queries)
             # format eligible posecodes
             for p in range(nb_poses): # iterate over poses
-                data, skipped, nb_skipped = add_posecode(data, skipped, p,
+                data, skipped, nb_skipped = add_code(data, skipped, p,
                                                 p_elig[p, pc],
                                                 random_skip, nb_skipped,
                                                 side_1, body_part_1,
                                                 side_2, body_part_2,
                                                 p_intptt[p, pc].item(),
+                                                PROP_SKIP_POSECODES,
                                                 extra_verbose)
 
     # parse super-posecodes (only defined through the eligibility matrix)
@@ -583,14 +424,15 @@ def format_and_skip_posecodes(p_interpretations, p_eligibility, p_queries, sp_qu
     nb_eligible += (sp_elig>0).sum().item()
     nb_nonskippable += (sp_elig==2).sum().item()
     for sp_ind, sp_id in enumerate(sp_queries): # iterate over super-posecodes
-        side_1, body_part_1, side_2, body_part_2  = parse_super_posecode_joints(sp_id, sp_queries)
+        side_1, body_part_1, side_2, body_part_2  = parse_super_code_joints(sp_id, sp_queries)
         for p in range(nb_poses):
-            data, skipped, nb_skipped = add_posecode(data, skipped, p,
+            data, skipped, nb_skipped = add_code(data, skipped, p,
                                             sp_elig[p, sp_ind],
                                             random_skip, nb_skipped,
                                             side_1, body_part_1,
                                             side_2, body_part_2,
                                             sp_queries[sp_id]["intptt_id"],
+                                            PROP_SKIP_POSECODES,
                                             extra_verbose)
 
     # check if there are poses with no posecodes, and fix them if possible
@@ -652,7 +494,7 @@ def superposecode_stats(p_eligibility, sp_queries,
         verdict = "eligible" if size < prop_eligible else "ignored"
         if size < prop_unskippable:
             verdict = "unskippable"
-        results.append([sp_queries[sp_id]['focus_body_part'], INTERPRETATION_SET[sp_queries[sp_id]['intptt_id']], round(size*100, 2), verdict])
+        results.append([sp_queries[sp_id]['focus_body_part'], POSECODE_INTERPRETATION_SET[sp_queries[sp_id]['intptt_id']], round(size*100, 2), verdict])
     
     # display a nice result table
     print("\n", tabulate(results, headers=["focus body part", "interpretation", "%", "eligibility"]), "\n")
@@ -664,7 +506,7 @@ def get_posecode_name(p_ind, p_kind, p_queries):
     """
     # get short names for the main & support body parts (if available)
     # NOTE: body_part_1 is always defined
-    side_1, body_part_1, side_2, body_part_2 = parse_posecode_joints(p_ind, p_kind, p_queries)
+    side_1, body_part_1, side_2, body_part_2 = parse_code_joints(p_ind, p_kind, p_queries)
     side_1 = side_1.replace("left", "L").replace("right", "R").replace(PLURAL_KEY, "")+" " if side_1 else ""
     side_2 = side_2.replace("left", "L").replace("right", "R")+" " if side_2 else ""
     body_part_2 = body_part_2 if body_part_2 else ""
@@ -694,10 +536,10 @@ def get_posecode_from_name(p_name):
 
     # parse information about body parts & posecode interpretation
     # (NOTE: one could use the intepretation name instead of interpretation id
-    # (by using x.group(3) directly instead of INTPTT_NAME2ID[x.group(3)]) for
+    # (by using x.group(3) directly instead of POSECODE_INTPTT_NAME2ID[x.group(3)]) for
     # better portability & understandability, outside of the captioning pipeline)
     x = re.search(r'\[(.*?)\] (.*?) \((.*?)\)', p_name)
-    p_kind, bp, intptt = x.group(1), x.group(2), INTPTT_NAME2ID[x.group(3)]
+    p_kind, bp, intptt = x.group(1), x.group(2), POSECODE_INTPTT_NAME2ID[x.group(3)]
 
     # depending on the formatting, deduce the body parts at stake
     x = re.search(r'L/R (\w+)', bp)
@@ -765,8 +607,8 @@ def posecode_intptt_scatter(p_kind, p_interpretations, p_queries,
     # list of interpretations to study
     ticks_names = ticks_names if ticks_names else POSECODE_OPERATORS_VALUES[p_kind]['category_names_ticks']
     intptts_names = intptts_names if intptts_names else POSECODE_OPERATORS_VALUES[p_kind]['category_names']
-    intptt_ids = [INTPTT_NAME2ID[n] for n in intptts_names]
-    intptt_ignored_ids = [INTPTT_NAME2ID[n] for n in intptts_names if 'ignored' in n]
+    intptt_ids = [POSECODE_INTPTT_NAME2ID[n] for n in intptts_names]
+    intptt_ignored_ids = [POSECODE_INTPTT_NAME2ID[n] for n in intptts_names if 'ignored' in n]
     nb_intptts = len(intptt_ids)
     
     # list of joint names to display
@@ -820,7 +662,7 @@ def posecode_intptt_scatter(p_kind, p_interpretations, p_queries,
 ################################################################################
 
 def quick_posecode_display(p):
-    if p: return p[:2]+[INTERPRETATION_SET[p[2]]]+p[3:]
+    if p: return p[:2]+[POSECODE_INTERPRETATION_SET[p[2]]]+p[3:]
 
 def same_posecode_family(pA, pB):
     # check if posecodes pA and pB have similar or opposite interpretations
@@ -832,12 +674,9 @@ def reverse_joint_order(pA):
     # (assumes that pA is of size 5)
     return pA[3:] + [OPPOSITE_CORRESP_ID[pA[2]]] + pA[:2]
 
-def pluralize(body_part):
-    return PLURALIZE.get(body_part, f"{body_part}s")
-
 def aggregate_posecodes(posecodes, simplified_captions=False,
                         apply_transrel_ripple_effect=True, apply_stat_ripple_effect=True,
-                        extra_verbose=False):
+                        verbose = True, extra_verbose=False):
 
     # augment ripple effect rules to have rules for the R side as well
     # (rules registered in the captioning_data were found to apply for L & R,
@@ -1033,7 +872,7 @@ def aggregate_posecodes(posecodes, simplified_captions=False,
         #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         # 5) Interpretation-based & focus-body-part-based aggregations
         if not simplified_captions:
-            updated_posecodes = aggreg_fbp_intptt_based(updated_posecodes, extra_verbose=extra_verbose)
+            updated_posecodes = aggreg_fbp_intptt_based(updated_posecodes, PROP_AGGREGATION_HAPPENS, extra_verbose=extra_verbose)
 
 
         # eventually, apply all changes
@@ -1043,106 +882,11 @@ def aggregate_posecodes(posecodes, simplified_captions=False,
             print(updated_posecodes)
 
     # Display stats on ripple effect rules
-    print("Posecodes removed by ripple effect rules based on statistics: ", stat_rer_removed)
-    print("Posecodes removed by ripple effect rules based on transitive relations:", transrel_rer_removed)
+    if verbose:
+        print("Posecodes removed by ripple effect rules based on statistics: ", stat_rer_removed)
+        print("Posecodes removed by ripple effect rules based on transitive relations:", transrel_rer_removed)
 
     return posecodes
-
-
-def aggreg_fbp_intptt_based(posecodes_1p, extra_verbose=False):
-    """
-    posecodes_1p: list of posecodes (structures of size 5) for a single pose
-
-    NOTE: interpretation-based aggregations and joint-based aggregations are not
-    independent, and could be applied on similar set of posecodes. Hence, one
-    cannot happen before the other. They need to be processed together
-    simultaneously.
-    NOTE: interpretation-based and joint-based aggregations are the mirror of
-    each other; interpretation-based aggregation can be schematized as follow:
-    x ~ y & x ~ z ==> x ~ (y+z)
-    while joint-based aggregation can be schematized as follow:
-    y ~ x & z ~ x ==> (y+z) ~ x
-    where "a ~ b" symbolises the relation (which depends on b) between body
-    side & part 1 (a) and body side & part 2 (b)
-    """
-
-    # list eligible interpretation-based and focus-body-part-based
-    # aggregations by listing the different sets of aggregable posecodes
-    # (identified by their index in the posecode list) for each
-    intptt_a = {}
-    fbp_a = {}
-    for p_ind, p in enumerate(posecodes_1p):
-        # interpretation-based aggregations require the second body part to
-        # be the same (a bit like entity-based aggregations between elements
-        # that do not form together a larger standard entity)
-        intptt_a[tuple(p[2:])] = intptt_a.get(tuple(p[2:]), []) + [p_ind]
-        fbp_a[tuple(p[:2])] = fbp_a.get(tuple(p[:2]), []) + [p_ind]
-
-    # choose which aggregations will be performed among the possible ones
-    # to this end, shuffle the order in which the aggregations will be considered;
-    # there must be at least 2 posecodes to perform an aggregation
-    possible_aggregs = [('intptt', k) for k,v in intptt_a.items() if len(v)>1] + \
-                        [('fbp', k) for k,v in fbp_a.items() if len(v)>1]
-    random.shuffle(possible_aggregs) # potential aggregations will be studied in random order, independently of their kind
-    aggregs_to_perform = [] # list of the aggregations to perform later (either intptt-based or fbp-based)
-    unavailable_p_inds = set() # indices of the posecodes that will be aggregated
-    for agg in possible_aggregs:
-        # get the list of posecodes ids that would be involved in this aggregation
-        p_inds = intptt_a[agg[1]] if agg[0] == "intptt" else fbp_a[agg[1]]
-        # check that all or a part of them are still available for aggregation
-        p_inds = list(set(p_inds).difference(unavailable_p_inds))
-        if len(p_inds) > 1: # there must be at least 2 (unused, hence available) posecodes to perform an aggregation
-            # update list of posecode indices to aggregate
-            random.shuffle(p_inds) # shuffle to later aggregate these posecodes in random order
-            if agg[0] == "intptt":
-                intptt_a[agg[1]] = p_inds
-            elif agg[0] == "fbp":
-                fbp_a[agg[1]] = p_inds
-            # grant aggregation (to perform later)
-            unavailable_p_inds.update(p_inds)
-            aggregs_to_perform.append(agg)
-    
-    # perform the elected aggregations
-    if extra_verbose: print("Aggregations to perform:", aggregs_to_perform)
-    updated_posecodes = []
-    for agg in aggregs_to_perform:
-        # get related code indices
-        if agg[0] == "intptt":
-            p_inds = intptt_a[agg[1]]
-        elif agg[0] == "fbp":
-            p_inds = fbp_a[agg[1]]
-        # aggregate
-        if random.random() < PROP_AGGREGATION_HAPPENS: 
-            if agg[0] == "intptt":
-                # perform the interpretation-based aggregation
-                # agg[1]: (size 3) interpretation id, side2, body_part2
-                new_posecode = [MULTIPLE_SUBJECTS_KEY, [posecodes_1p[p_ind][:2] for p_ind in p_inds]] + list(agg[1])
-            elif agg[0] == "fbp":
-                # perform the focus-body-part-based aggregation
-                # agg[1]: (size 2) side1, body_part1
-                new_posecode = [JOINT_BASED_AGGREG_KEY, list(agg[1]), [posecodes_1p[p_ind][2] for p_ind in p_inds], [posecodes_1p[p_ind][3:] for p_ind in p_inds]]
-                # if performing interpretation-fusion, it should happen here
-                # ie. ['<joint_based_aggreg>', ['right', 'arm'], [16, 9, 15], [['left', 'arm'], ['left', 'arm'], ['left', 'arm']]], 
-                # which leads to "the right arm is behind the left arm, spread far apart from the left arm, above the left arm"
-                # whould become something like "the right arm is spread far apart from the left arm, behind and above it"
-                # CONDITION: the second body part is not None, and is the same for at least 2 interpretations
-                # CAUTION: one should avoid mixing "it" words refering to BP2 with "it" words refering to BP1...
-            updated_posecodes.append(new_posecode)
-        else:
-            # if the posecodes at stake could not be aggregated, put them back
-            # in the pool of posecodes
-            for p_ind in p_inds:
-                unavailable_p_inds.remove(p_ind)
-    if extra_verbose:
-        print("Posecodes from interpretation/joint-based aggregations:")
-        for p in updated_posecodes:
-            print(p)
-
-    # don't forget to add all the posecodes that were not subject to these kinds
-    # of aggregations
-    updated_posecodes.extend([p for p_ind, p in enumerate(posecodes_1p) if p_ind not in unavailable_p_inds])
-
-    return updated_posecodes
 
 
 ################################################################################
@@ -1190,9 +934,9 @@ def side_body_part_to_text(side_body_part, determiner="the", new_sentence=False)
         elif bp == "the body":
             return f"{determiner} body", "is"
         return bp, "is"
-    else:
-        s, v = side_and_plural(side, determiner)
-        return f"{s} {body_part if body_part else ''}", v
+	# default case:
+    s, v = side_and_plural(side, determiner)
+    return f"{s} {body_part if body_part else ''}", v
 
 
 def omit_for_flow(bp1, verb, intptt_name, bp2, bp1_initial):
@@ -1202,7 +946,7 @@ def omit_for_flow(bp1, verb, intptt_name, bp2, bp1_initial):
     # simply makes the description more cumbersome
     if bp2 is None: bp2 = '' # temporary, to ease code reading (reset to None at the end)
     # hands/feet are compared to the torso to know whether they are in the back
-    if 'torso' in bp2: bp2 = ''
+    if 'torso' in bp2 and intptt_name not in ['close']: bp2 = ''
     # hands are compared to their respective shoulder to know whether they are
     # out of line
     if 'hand' in bp1_initial and 'shoulder' in bp2 and intptt_name in ['at_right', 'at_left']: bp2 = ''
@@ -1239,7 +983,7 @@ def posecode_to_text(bp1, verb, intptt_id, bp2, bp1_initial, simplified_captions
     Returns:
         string
     """
-    intptt_name = INTERPRETATION_SET[intptt_id]
+    intptt_name = POSECODE_INTERPRETATION_SET[intptt_id]
     # First, some patches
     if not simplified_captions:
         bp2 = omit_for_flow(bp1, verb, intptt_name, bp2, bp1_initial)
@@ -1276,8 +1020,14 @@ def convert_posecodes(posecodes, simplified_captions=False, verbose=True):
             continue # process the next pose
 
         # Preliminary decisions (order, determiner, transitions)
-        # shuffle posecodes to provide pose information in no particular order
-        random.shuffle(posecodes[p])
+        if True:
+            # [improvement coming from PoseFix ICCV]
+            # organize posecodes per entity
+            posecodes[p] = order_codes(posecodes[p])
+        else:
+            # [ECCV version]
+            # shuffle posecodes to provide pose information in no particular order
+            random.shuffle(posecodes[p])
         # randomly pick a determiner for the description
         determiner = random.choices(DETERMINERS, weights=DETERMINERS_PROP)[0]
         determiners[p] = determiner
@@ -1299,7 +1049,7 @@ def convert_posecodes(posecodes, simplified_captions=False, verbose=True):
             elif with_in_same_sentence and transitions[i_pc] != ' and ':
                 with_in_same_sentence = False
 
-            # Infer text for the secondy body part (no use to catch the verb as
+            # Infer text for the second body part (no use to catch the verb as
             # this body part is not the subject of the sentence, hence the [0]
             # after calling side_body_part_to_text, this time)
             if pc[0] == JOINT_BASED_AGGREG_KEY:
@@ -1423,11 +1173,12 @@ def create_sentence_from_babel_tags(pose_babel_tags, babel_tag2txt):
 if __name__ == "__main__" :
 
     import argparse
-    from text2pose.config import POSESCRIPT_LOCATION
 
-    parser = argparse.ArgumentParser(description='Parameters for captioning.')
+    import text2pose.config as config
+
+    parser = argparse.ArgumentParser(description='Parameters for the captioning pipeline.')
     parser.add_argument('--action', default="generate_captions", choices=("generate_captions", "posecode_stats"), help="Action to perform.")
-    parser.add_argument('--saving_dir', default=POSESCRIPT_LOCATION+"/generated_captions/", help='General location for saving generated captions and data related to them.')
+    parser.add_argument('--saving_dir', default=config.POSESCRIPT_LOCATION+"/generated_captions/", help='General location for saving generated captions and data related to them.')
     parser.add_argument('--version_name', default="tmp", help='Name of the caption version. Will be used to create a subdirectory of --saving_dir.')
     parser.add_argument('--simplified_captions', action='store_true', help='Produce a simplified version of the captions (basically: no aggregation, no omitting of some support keypoints for the sake of flow, no randomly referring to a body part by a substitute word).')
     parser.add_argument('--apply_transrel_ripple_effect', action='store_true', help='Discard some posecodes using ripple effect rules based on transitive relations between body parts.')
@@ -1445,9 +1196,7 @@ if __name__ == "__main__" :
         print("Created new dir", save_dir)
 
     # load and format joint coordinates for input (dict -> matrix)
-    coords = torch.load(os.path.join(POSESCRIPT_LOCATION, "ids_2_coords_correct_orient_adapted.pt"))
-    pose_ids = sorted(coords.keys(), key=lambda k: int(k))
-    coords = torch.stack([coords[k] for k in pose_ids])
+    coords = torch.load(os.path.join(config.POSESCRIPT_LOCATION, f"ids_2_coords_correct_orient_adapted{config.version_suffix}.pt"))
 
     if args.action=="generate_captions":
 
@@ -1463,10 +1212,10 @@ if __name__ == "__main__" :
             null_tags = set([tag for tag in babel_tag2txt if not babel_tag2txt[tag]])
 
             # load and format babel labels for each pose
-            pose_babel_tags_filepath = os.path.join(POSESCRIPT_LOCATION, "babel_labels_for_posescript.pkl")
+            pose_babel_tags_filepath = os.path.join(config.POSESCRIPT_LOCATION, f"babel_labels_for_posescript{config.version_suffix}.pkl")
             with open(pose_babel_tags_filepath, "rb") as f:
                 d = pickle.load(f)
-            pose_babel_tags = [d[pid] for pid in pose_ids]
+            pose_babel_tags = [d[str(pid)] for pid in range(len(d))]
 
             # filter out useless tags, and format results to have a list of
             # action tags (which can be empty) for each pose
@@ -1492,17 +1241,23 @@ if __name__ == "__main__" :
 
         # process
         t1 = time.time()
-        main(coords,
+        print(f"Considering {len(coords)} poses.")
+        _ = main(coords,
                 save_dir = save_dir,
                 babel_info=pose_babel_text,
                 simplified_captions=args.simplified_captions,
                 apply_transrel_ripple_effect = args.apply_transrel_ripple_effect,
                 apply_stat_ripple_effect = args.apply_stat_ripple_effect,
                 random_skip = args.random_skip)
+        with open(os.path.join(save_dir, "args.txt"), 'w') as f:
+            f.write(args.__repr__())
         print(f"Process took {time.time() - t1} seconds.")
         print(args)
 
     elif args.action == "posecode_stats":
+
+        # NOTE: this part has not been updated after adding the posecodes marked
+        # with ADDED_FOR_MODIFIERS
 
         # Input
         prop_eligible = 0.4
@@ -1516,7 +1271,7 @@ if __name__ == "__main__" :
         # Infer posecodes
         saved_filepath = os.path.join(save_dir, "posecodes_intptt_eligibility.pt")
         if os.path.isfile(saved_filepath):
-            p_interpretations, p_eligibility, INTPTT_NAME2ID = torch.load(saved_filepath)
+            p_interpretations, p_eligibility, POSECODE_INTPTT_NAME2ID = torch.load(saved_filepath)
             print("Load file:", saved_filepath)
         else:
             # Select & complete joint coordinates (prosthesis phalanxes, virtual joints)
@@ -1524,7 +1279,7 @@ if __name__ == "__main__" :
             # Eval & interprete & elect eligible elementary posecodes
             p_interpretations, p_eligibility = infer_posecodes(coords, p_queries, sp_queries, verbose=True)
             # save
-            torch.save([p_interpretations, p_eligibility, INTPTT_NAME2ID], saved_filepath)
+            torch.save([p_interpretations, p_eligibility, POSECODE_INTPTT_NAME2ID], saved_filepath)
             print("Saved file:", saved_filepath)
 
         # Get stats for super-posecodes

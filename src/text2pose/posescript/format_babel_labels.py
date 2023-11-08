@@ -1,9 +1,10 @@
 ##############################################################
 ## text2pose                                                ##
-## Copyright (c) 2022-present                               ##
+## Copyright (c) 2022, 2023                                 ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
-## Naver Corporation                                        ##
-## CC BY-NC-SA 4.0                                          ##
+## and Naver Corporation                                    ##
+## Licensed under the CC BY-NC-SA 4.0 license.              ##
+## See project root for license details.                    ##
 ##############################################################
 
 import os
@@ -32,7 +33,7 @@ for file in l_babel_extra_files:
     babel[file] = json.load(open(os.path.join(config.BABEL_LOCATION, file+'.json')))    
 
 # load PoseScript
-dataID_2_pose_info = utils.read_posescript_json("ids_2_dataset_sequence_and_frame_index.json")
+dataID_2_pose_info = utils.read_json(config.file_pose_id_2_dataset_sequence_and_frame_index)
 
 # AMASS/BABEL path adaptation
 amass_to_babel_subdir = {
@@ -118,7 +119,7 @@ table.append(['>1 label',sum([ (isinstance(v,list) and len(v)>=2 and v[0][0] is 
 print(tabulate(table, headers=["Label", "Number of poses"]))
 
 # save
-save_filepath = os.path.join(config.POSESCRIPT_LOCATION, "babel_labels_for_posescript.pkl")
+save_filepath = os.path.join(config.POSESCRIPT_LOCATION, f"babel_labels_for_posescript{config.version_suffix}.pkl")
 with open(save_filepath, 'wb') as f:
     pickle.dump(babel_labels_for_posescript, f)
 print("Saved", save_filepath)

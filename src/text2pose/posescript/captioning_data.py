@@ -1,9 +1,10 @@
 ##############################################################
 ## PoseScript                                               ##
-## Copyright (c) 2022-present                               ##
+## Copyright (c) 2022, 2023                                 ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
-## Naver Corporation                                        ##
-## CC BY-NC-SA 4.0                                          ##
+## and Naver Corporation                                    ##
+## Licensed under the CC BY-NC-SA 4.0 license.              ##
+## See project root for license details.                    ##
 ##############################################################
 
 # Captions are automatically generated based on the pieces of information
@@ -11,9 +12,11 @@
 # captioning pipeline:
 # - posecode extraction (eg. joint sets, interpretations)
 # - posecode selection (eg. statistics-based rules to tackle redundancy)
-# - posecode aggregation (eg. entities for entity-based aggregation rules)
+# - posecode aggregation (eg. aggregation probability)
 # - posecode conversion (eg. template sentences)
-# Note that some polishing actions are defined in captioning.py only.
+# Note that complementary information is given in posescript/utils.py (eg.
+# entities for entity-based aggregation rules) and that some polishing actions
+# are defined in posescript/captioning.py only.
 # 
 #
 # General design choices:
@@ -24,11 +27,12 @@
 #
 #
 # To define a new kind of posecodes, follow the ADD_POSECODE_KIND marks
-# (also in posecodes.py)
+# (also in posescript/posecodes.py)
 # To define new super-posecodes,follow the ADD_SUPER_POSECODE marks
 # To define new virtual joints, follow the ADD_VIRTUAL_JOINT marks
-# (also in captioning.py)
-
+# (also in posescript/utils.py)
+# To check which posecodes were added after the ECCV'22 PoseScript submission,
+# follow the ADDED_FOR_MODIFIER marks.
 
 
 ################################################################################
@@ -42,7 +46,7 @@
 ######################
 
 # The following describes the different posecode operators (ie. kinds of relations):
-# - category_names: names used for computation 
+# - category_names: names used for computation; they all must be unique among posecodes (ie. within POSECODE_OPERATORS_VALUES)
 # - category_names_ticks: names used for display
 # - category_thresholds: values (in degrees or meters) to distinguish between 2 categories
 # - random_max_offset: value (in degrees or meters) used to randomize the binning step (noise level)
@@ -61,21 +65,21 @@ POSECODE_OPERATORS_VALUES = {
         'random_max_offset': 0.05
     },
     'relativePosX': { # values in meters
-        'category_names': ['at_right', 'ignored_relpos0', 'at_left'],
-        'category_names_ticks': ['at the right of', 'x-ignored', 'at the left of'],
-        'category_thresholds': [-0.15, 0.15],
+        'category_names': ['at_right', 'ignored_relpos0a', 'x-aligned', 'ignored_relpos0b', 'at_left'],
+        'category_names_ticks': ['at the right of', 'x-ignored', 'x-aligned', 'x-ignored', 'at the left of'],
+        'category_thresholds': [-0.15, -0.05, 0.05, 0.15],
         'random_max_offset': 0.05
     },
     'relativePosY': { # values in meters
-        'category_names': ['below', 'ignored_relpos1', 'above'],
-        'category_names_ticks': ['below', 'y-ignored', 'above'],
-        'category_thresholds': [-0.15, 0.15],
+        'category_names': ['below', 'ignored_relpos1a', 'y-aligned', 'ignored_relpos1b', 'above'],
+        'category_names_ticks': ['below', 'y-ignored', 'y-aligned', 'y-ignored', 'above'],
+        'category_thresholds': [-0.15, -0.05, 0.05, 0.15],
         'random_max_offset': 0.05
     },
     'relativePosZ': { # values in meters
-        'category_names': ['behind', 'ignored_relpos2', 'front'],
-        'category_names_ticks': ['behind', 'z-ignored', 'in front of'],
-        'category_thresholds': [-0.15, 0.15],
+        'category_names': ['behind', 'ignored_relpos2a', 'z-aligned', 'ignored_relpos2b', 'front'],
+        'category_names_ticks': ['behind', 'z-ignored', 'z-aligned', 'z-ignored', 'in front of'],
+        'category_thresholds': [-0.15, -0.05, 0.05, 0.15],
         'random_max_offset': 0.05
     },
     'relativeVAxis': { # values in degrees (between 0 and 90)
@@ -104,9 +108,9 @@ POSECODE_OPERATORS_VALUES = {
 # - joint set (joints involved in the computation of the posecode)
 # - main body part (~ description topic) when converting the posecode to text.
 #       If None, then the posecode can be used to describe either one of the
-#       joint from the joint set (ie. any joint can be the description topic).
+#       joints from the joint set (ie. any joint can be the description topic).
 # - list of acceptable interpretations for description regarding the posecode
-#       operator. If an empty list is provided, all interpretations from the
+#       operator. If string 'ALL' is provided, all interpretations from the
 #       operator are to be considered (note that if no interpretation is to be
 #       considered, then the posecode should not be defined in the first place).
 # - list of rare interpretations, that should make it to the description
@@ -147,12 +151,16 @@ POSECODE_OPERATORS_VALUES = {
 #           support interpretation of any type will make it to the description
 #           text, no matter if the super-posecode could be produced or not (this
 #           is somewhat the opposite of a support-I interpretation).
+# - list of 'absolute' interpretations, ie. posecode interpretations that could
+#           be used to describe pose relationships. These do not need to be also
+#           mentionned as acceptable interpretations.
 #
 # NOTE: this section contains information about posecode selection in the sense
 # that rare and eligible posecode interpretations are defined here.
 
 
 PLURAL_KEY = '<plural>' # use this key before a body topic (eg. feet/hands) if it is plural, as eg. f'{PLURAL_KEY}_feet'
+# NOTE: this key is first defined in posecript/utils.py
 
 
 #**********#
@@ -164,16 +172,16 @@ ANGLE_POSECODES = [
     ### SEMANTIC: BENT JOINT?
     # L knee
     [('left_hip', 'left_knee', 'left_ankle'), 'left_knee',
-        [], ['completely bent'], [('completely bent', 2)]],
+        ['ALL'], ['completely bent'], [('completely bent', 2)], ['completely bent', 'right angle', 'straight']],
     # R knee
     [('right_hip', 'right_knee', 'right_ankle'), 'right_knee',
-        [], ['completely bent'], [('completely bent', 2)]],
+        ['ALL'], ['completely bent'], [('completely bent', 2)], ['completely bent', 'right angle', 'straight']],
     # L elbow
     [('left_shoulder', 'left_elbow', 'left_wrist'), 'left_elbow',
-        [], ['completely bent'], []],
+        ['ALL'], ['completely bent'], [], ['completely bent', 'right angle', 'straight']],
     # R elbow
     [('right_shoulder', 'right_elbow', 'right_wrist'), 'right_elbow',
-        [], ['completely bent'], []]
+        ['ALL'], ['completely bent'], [], ['completely bent', 'right angle', 'straight']]
 ]
 
 
@@ -184,31 +192,98 @@ ANGLE_POSECODES = [
 DISTANCE_POSECODES = [
     #*****************************************
     ### SEMANTIC: HOW CLOSE ARE SYMMETRIC BODY PARTS?
-    [('left_elbow', 'right_elbow'), None, ["close", "shoulder width", "wide"], ["close"], [('shoulder width', 1)]], # elbows
-    [('left_hand', 'right_hand'), None, ["close", "shoulder width", "spread", "wide"], [], [('shoulder width', 1)]], # hands
-    [('left_knee', 'right_knee'), None, ["close", "shoulder width", "wide"], ["wide"], [('shoulder width', 1)]], # knees
-    [('left_foot', 'right_foot'), None, ["close", "shoulder width", "wide"], ["close"], [('shoulder width', 1)]], # feet
+    [('left_elbow', 'right_elbow'), None, ["close", "shoulder width", "wide"], ["close"], [('shoulder width', 1)], ['close']], # elbows
+    [('left_hand', 'right_hand'), None, ["close", "shoulder width", "spread", "wide"], [], [('shoulder width', 1)], ['close']], # hands
+    [('left_knee', 'right_knee'), None, ["close", "shoulder width", "wide"], ["wide"], [('shoulder width', 1)], ['close']], # knees
+    [('left_foot', 'right_foot'), None, ["close", "shoulder width", "wide"], ["close"], [('shoulder width', 1)], ['close']], # feet
     #*****************************************
     ### SEMANTIC: WHAT ARE THE HANDS CLOSE TO?
-    [('left_hand', 'left_shoulder'), 'left_hand', ['close'], ['close'], []], # hand/shoulder... LL
-    [('left_hand', 'right_shoulder'), 'left_hand', ['close'], ['close'], []], # ... LR
-    [('right_hand', 'right_shoulder'), 'right_hand', ['close'], ['close'], []], # ... RR
-    [('right_hand', 'left_shoulder'), 'right_hand', ['close'], ['close'], []], # ... RL
-    [('left_hand', 'right_elbow'), 'left_hand', ['close'], ['close'], []], # hand/elbow LR (NOTE: LL & RR are impossible)
-    [('right_hand', 'left_elbow'), 'right_hand', ['close'], ['close'], []], # ... RL
-    [('left_hand', 'left_knee'), 'left_hand', ['close'], ['close'], []], # hand/knee... LL
-    [('left_hand', 'right_knee'), 'left_hand', ['close'], ['close'], []], # ... LR
-    [('right_hand', 'right_knee'), 'right_hand', ['close'], ['close'], []], # ... RR
-    [('right_hand', 'left_knee'), 'right_hand', ['close'], ['close'], []], # ... RL
-    [('left_hand', 'left_ankle'), 'left_hand', ['close'], ['close'], []], # hand/ankle... LL
-    [('left_hand', 'right_ankle'), 'left_hand', ['close'], ['close'], []], # ... LR
-    [('right_hand', 'right_ankle'), 'right_hand', ['close'], ['close'], []], # ... RR
-    [('right_hand', 'left_ankle'), 'right_hand', ['close'], ['close'], []], # ... RL
-    [('left_hand', 'left_foot'), 'left_hand', ['close'], ['close'], []], # hand/foot... LL
-    [('left_hand', 'right_foot'), 'left_hand', ['close'], ['close'], []], # ... LR
-    [('right_hand', 'right_foot'), 'right_hand', ['close'], ['close'], []], # ... RR
-    [('right_hand', 'left_foot'), 'right_hand', ['close'], ['close'], []] # ... RL
+    [('left_hand', 'left_shoulder'), 'left_hand', ['close'], ['close'], [], ['close']], # hand/shoulder... LL
+    [('left_hand', 'right_shoulder'), 'left_hand', ['close'], ['close'], [], ['close']], # ... LR
+    [('right_hand', 'right_shoulder'), 'right_hand', ['close'], ['close'], [], ['close']], # ... RR
+    [('right_hand', 'left_shoulder'), 'right_hand', ['close'], ['close'], [], ['close']], # ... RL
+    [('left_hand', 'right_elbow'), 'left_hand', ['close'], ['close'], [], ['close']], # hand/elbow LR (NOTE: LL & RR are impossible)
+    [('right_hand', 'left_elbow'), 'right_hand', ['close'], ['close'], [], ['close']], # ... RL
+    [('left_hand', 'left_knee'), 'left_hand', ['close'], ['close'], [], ['close']], # hand/knee... LL
+    [('left_hand', 'right_knee'), 'left_hand', ['close'], ['close'], [], ['close']], # ... LR
+    [('right_hand', 'right_knee'), 'right_hand', ['close'], ['close'], [], ['close']], # ... RR
+    [('right_hand', 'left_knee'), 'right_hand', ['close'], ['close'], [], ['close']], # ... RL
+    [('left_hand', 'left_ankle'), 'left_hand', ['close'], ['close'], [], ['close']], # hand/ankle... LL
+    [('left_hand', 'right_ankle'), 'left_hand', ['close'], ['close'], [], ['close']], # ... LR
+    [('right_hand', 'right_ankle'), 'right_hand', ['close'], ['close'], [], ['close']], # ... RR
+    [('right_hand', 'left_ankle'), 'right_hand', ['close'], ['close'], [], ['close']], # ... RL
+    [('left_hand', 'left_foot'), 'left_hand', ['close'], ['close'], [], ['close']], # hand/foot... LL
+    [('left_hand', 'right_foot'), 'left_hand', ['close'], ['close'], [], ['close']], # ... LR
+    [('right_hand', 'right_foot'), 'right_hand', ['close'], ['close'], [], ['close']], # ... RR
+    [('right_hand', 'left_foot'), 'right_hand', ['close'], ['close'], [], ['close']], # ... RL
+    #*****************************************
+    ### SEMANTIC: CLOSE TO BODY
+    # (defined for super-paircodes; using support-I definition so these
+    # posecodes do not appear in descriptions) # ADDED_FOR_MODIFIERS
+    [('left_elbow', 'torso'), 'left_elbow', ['close'], [], [('close', 1)], []], # elbow
+    [('left_hand', 'torso'), 'left_hand', ['close'], [], [('close', 1)], []], # hand
+    [('left_knee', 'torso'), 'left_knee', ['close'], [], [('close', 1)], []], # knee
+    [('left_foot', 'torso'), 'left_foot', ['close'], [], [('close', 1)], []], # foot
+    [('right_elbow', 'torso'), 'right_elbow', ['close'], [], [('close', 1)], []], # elbow
+    [('right_hand', 'torso'), 'right_hand', ['close'], [], [('close', 1)], []], # hand
+    [('right_knee', 'torso'), 'right_knee', ['close'], [], [('close', 1)], []], # knee
+    [('right_foot', 'torso'), 'right_foot', ['close'], [], [('close', 1)], []], # foot
 ]
+
+# some functions to automatically add some posecodes to this list
+
+def add_element_to_distance_posecodes(jts, focus_joint, intptt, rare=False, support=None, absolute=False):
+    """
+    Args:
+        jts: tuple of joint names, ordered following the rules of 'focus joint
+            first, support joint next', 'left side first, right side second' (in
+            this order of priority).
+        focus_joint: may be None if any of the computation joints could be used
+            as focus joint.
+        support: (None|1|2) indicates whether the code is a support one, and if
+            so, its type.
+        rare: whether the new interpretation is rare
+        absolute: whether the new interpretation provides absolute information
+    """
+    # check whether the set of joints is already studied;
+    for i, el in enumerate(DISTANCE_POSECODES):
+        # if an entry already exists, update it
+        if el[0] == jts:
+            # if the interpretation is rare, and must be a support, it should be
+            # a support of type II
+            if intptt in el[3] and support is not None: support = 2
+            DISTANCE_POSECODES[i] = [jts, focus_joint,
+                add_intptt_to_list_distance_posecode(intptt, initial=el[2], type="acceptable"),
+                add_intptt_to_list_distance_posecode(intptt, initial=el[3], type="rare", added_arg=rare),
+                add_intptt_to_list_distance_posecode(intptt, initial=el[4], type="support", added_arg=support),
+                add_intptt_to_list_distance_posecode(intptt, initial=el[5], type="absolute", added_arg=absolute)
+                ]
+            return
+    # otherwise, create a new entry
+    # NOTE: initial must be provided explicitely
+    DISTANCE_POSECODES.append(
+        [jts, focus_joint,
+        add_intptt_to_list_distance_posecode(intptt, initial=[], type="acceptable"),
+        add_intptt_to_list_distance_posecode(intptt, initial=[], type="rare", added_arg=rare),
+        add_intptt_to_list_distance_posecode(intptt, initial=[], type="support", added_arg=support),
+        add_intptt_to_list_distance_posecode(intptt, initial=[], type="absolute", added_arg=absolute)
+        ]
+    )
+
+
+def add_intptt_to_list_distance_posecode(intptt, initial, type='acceptable', added_arg=None):
+    """
+    Will not overwrite support type, if any already registered.
+    """
+    if initial is None:
+        initial = []
+    if type in ["acceptable"]:
+        if intptt not in initial: initial.append(intptt)
+    elif type in ["rare", "absolute"]:
+        if intptt not in initial and added_arg: initial.append(intptt)
+    elif type in ["support"] and added_arg:
+        if intptt not in [v[0] for v in initial]: initial.append((intptt, added_arg))
+    return initial
 
 
 #*********************#
@@ -226,46 +301,46 @@ RELATIVEPOS_POSECODES = [
     # shoulders
     [('left_shoulder', 'right_shoulder'), None,
         [None, ['below', 'above'], ['behind', 'front']],
-        [[],[],[]], [[],[],[]]],
+        [[],[],[]], [[],[],[]], [[],[],[]]],
     # elbows
     [('left_elbow', 'right_elbow'), None,
         [None, ['below', 'above'], ['behind', 'front']],
-        [[],[],[]], [[],[],[]]],
+        [[],[],[]], [[],[],[]], [[],[],[]]],
     # hands
     [('left_hand', 'right_hand'), None,
         [['at_right'], ['below', 'above'], ['behind', 'front']],
-        [['at_right'],[],[]], [[],[],[]]],
+        [['at_right'],[],[]], [[],[],[]], [[],[],[]]],
     # knees
     [('left_knee', 'right_knee'), None,
         [None, ['below', 'above'], ['behind', 'front']],
-        [[],[],[]], [[],[('above', 2)],[]]],
+        [[],[],[]], [[],[('above', 2)],[]], [[],[],[]]],
     # foots
     [('left_foot', 'right_foot'), None,
         [['at_right'], ['below', 'above'], ['behind', 'front']],
-        [['at_right'],[],[]], [[],[],[]]],
+        [['at_right'],[],[]], [[],[],[]], [[],[],[]]],
     #*****************************************
     ### SEMANTIC: LEANING BODY? KNEELING BODY ?
     # leaning to side, forward/backward
     [('neck', 'pelvis'), 'body',
         [['at_right', 'at_left'], None, ['behind', 'front']],
         [[],[],[]],
-        [[('at_right', 1), ('at_left', 1)],[],[('behind', 1), ('front', 1)]]], # support for 'bent forward/backward and to the sides'
+        [[('at_right', 1), ('at_left', 1)],[],[('behind', 1), ('front', 1)]], [[],[],[]]], # support for 'bent forward/backward and to the sides'
     [('left_ankle', 'neck'), 'left_ankle',
         [None, ['below'], None],
         [[],[],[]],
-        [[],[('below', 1)],[]]], # support for 'bent forward/backward'
+        [[],[('below', 1)],[]], [[],[],[]]], # support for 'bent forward/backward'
     [('right_ankle', 'neck'), 'right_ankle',
         [None, ['below'], None],
         [[],[],[]],
-        [[],[('below', 1)],[]]], # support for 'bent forward/backward'
+        [[],[('below', 1)],[]], [[],[],[]]], # support for 'bent forward/backward'
     [('left_hip', 'left_knee'), 'left_hip',
         [None, ['above'], None],
         [[],[],[]],
-        [[],[('above', 1)],[]]], # support for 'kneeling'
+        [[],[('above', 1)],[]], [[],[],[]]], # support for 'kneeling'
     [('right_hip', 'right_knee'), 'left_hip',
         [None, ['above'], None],
         [[],[],[]],
-        [[],[('above', 1)],[]]], # support for 'kneeling'
+        [[],[('above', 1)],[]], [[],[],[]]], # support for 'kneeling'
     #*****************************************
     ### SEMANTIC: CROSSING ARMS/LEGS? EXTREMITIES BELOW/ABOVE USUAL (1/2)?
     ### (for crossing: compare the position of the body extremity wrt to the 
@@ -273,56 +348,111 @@ RELATIVEPOS_POSECODES = [
     # left_hand
     [('left_hand', 'left_shoulder'), 'left_hand',
         [['at_right'], ['above'], None], # removed 'below' based on stats
-        [[],[],[]], [[],[],[]]],
+        [[],[],[]], [[],[],[]], [[],[],[]]],
     # right_hand
     [('right_hand', 'right_shoulder'), 'right_hand',
         [['at_left'], ['above'], None], # removed 'below' based on stats
-        [[],[],[]], [[],[],[]]],
+        [[],[],[]], [[],[],[]], [[],[],[]]],
     # left_foot
     [('left_foot', 'left_hip'), 'left_foot',
         [['at_right'], ['above'], None],
-        [['at_right'],['above'],[]], [[],[],[]]],
+        [['at_right'], ['above'],[]], [[],[],[]], [[],[],[]]],
     # right_foot
     [('right_foot', 'right_hip'), 'right_foot',
         [['at_left'], ['above'], None],
-        [['at_left'],['above'],[]], [[],[],[]]],
+        [['at_left'], ['above'],[]], [[],[],[]], [[],[],[]]],
     #*****************************************
     ### SEMANTIC: EXTREMITIES BELOW/ABOVE USUAL (2/2)?
     # left_hand
     [('left_wrist', 'neck'), 'left_hand',
         [None, ['above'], None], # removed 'below' based on stats
-        [[],[],[]], [[],[],[]]],
+        [[],[],[]], [[],[],[]], [[],[],[]]],
     # right_hand
     [('right_wrist', 'neck'), 'right_hand',
         [None, ['above'], None], # removed 'below' based on stats
-        [[],[],[]], [[],[],[]]],
+        [[],[],[]], [[],[],[]], [[],[],[]]],
     # left_hand
     [('left_hand', 'left_hip'), 'left_hand',
         [None, ['below'], None], # removed 'above' based on stats
-        [[],[],[]], [[],[],[]]],
+        [[],[],[]], [[],[],[]], [[],[],[]]],
     # right_hand
     [('right_hand', 'right_hip'), 'right_hand',
         [None, ['below'], None], # removed 'above' based on stats
-        [[],[],[]], [[],[],[]]],
+        [[],[],[]], [[],[],[]], [[],[],[]]],
     #*****************************************
     ### SEMANTIC: EXTREMITIES IN THE FRONT //or// BACK?
     # left_hand
     [('left_hand', 'torso'), 'left_hand', 
         [None, None, ['behind']], # removed 'front' based on stats
-        [[],[],[]], [[],[],[]]],
+        [[],[],[]], [[],[],[]], [[],[],[]]],
     # right_hand
     [('right_hand', 'torso'), 'right_hand', 
         [None, None, ['behind']], # removed 'front' based on stats
-        [[],[],[]], [[],[],[]]],
+        [[],[],[]], [[],[],[]], [[],[],[]]],
     # left_foot
     [('left_foot', 'torso'), 'left_foot', 
         [None, None, ['behind', 'front']],
-        [[],[],[]], [[],[],[]]],
+        [[],[],[]], [[],[],[]], [[],[],[]]],
     # right_foot
     [('right_foot', 'torso'), 'right_foot', 
         [None, None, ['behind', 'front']],
-        [[],[],[]], [[],[],[]]],
+        [[],[],[]], [[],[],[]], [[],[],[]]],
 ]
+
+# some functions to add automatically some posecodes to this list
+
+def add_element_to_relativepos_posecodes(jts, focus_joint, axis_id, intptt, rare=False, support=None, absolute=False):
+    """
+    Args:
+        jts: tuple of joint names, ordered following the rules of 'focus joint
+            first, support joint next', 'left side first, right side second' (in
+            this order of priority).
+        focus_joint: may be None if any of the computation joints could be used
+            as focus joint.
+        support: (None|1|2) indicates whether the code is a support one, and if
+            so, its type.
+        rare: whether the new interpretation is rare
+        absolute: whether the new interpretation provides absolute information
+    """
+    # check whether the set of joints is already studied;
+    for i, el in enumerate(RELATIVEPOS_POSECODES):
+        # if an entry already exists, update it
+        if el[0] == jts:
+            # if the interpretation is rare, and must be a support, it should be
+            # a support of type II
+            if intptt in el[3][axis_id] and support is not None: support = 2
+            RELATIVEPOS_POSECODES[i] = [jts, focus_joint,
+                add_intptt_to_list_relativepos_posecode(axis_id, intptt, initial=el[2], type="acceptable"),
+                add_intptt_to_list_relativepos_posecode(axis_id, intptt, initial=el[3], type="rare", added_arg=rare),
+                add_intptt_to_list_relativepos_posecode(axis_id, intptt, initial=el[4], type="support", added_arg=support),
+                add_intptt_to_list_relativepos_posecode(axis_id, intptt, initial=el[5], type="absolute", added_arg=absolute)
+                ]
+            return
+    # otherwise, create a new entry
+    # NOTE: initial must be provided explicitely
+    RELATIVEPOS_POSECODES.append(
+        [jts, focus_joint,
+        add_intptt_to_list_relativepos_posecode(axis_id, intptt, initial=[[],[],[]], type="acceptable"),
+        add_intptt_to_list_relativepos_posecode(axis_id, intptt, initial=[[],[],[]], type="rare", added_arg=rare),
+        add_intptt_to_list_relativepos_posecode(axis_id, intptt, initial=[[],[],[]], type="support", added_arg=support),
+        add_intptt_to_list_relativepos_posecode(axis_id, intptt, initial=[[],[],[]], type="absolute", added_arg=absolute)
+        ]
+    )
+
+
+def add_intptt_to_list_relativepos_posecode(axis_id, intptt, initial, type='acceptable', added_arg=None):
+    """
+    Will not overwrite support type, if any already registered.
+    """
+    if initial[axis_id] is None:
+        initial[axis_id] = []
+    if type in ["acceptable"]:
+        if intptt not in initial[axis_id]: initial[axis_id].append(intptt)
+    elif type in ["rare", "absolute"]:
+        if intptt not in initial[axis_id] and added_arg: initial[axis_id].append(intptt)
+    elif type in ["support"] and added_arg:
+        if intptt not in [v[0] for v in initial[axis_id]]: initial[axis_id].append((intptt, added_arg))
+    return initial
 
 
 #********************#
@@ -332,19 +462,19 @@ RELATIVEPOS_POSECODES = [
 RELATIVEVAXIS_POSECODES = [
     #*****************************************
     ### SEMANTIC: BODY PART HORIZONTAL/VERTICAL?
-    [('left_hip', 'left_knee'), 'left_thigh', ['horizontal', 'vertical'], ['horizontal'], []], # L thigh alignment
-    [('right_hip', 'right_knee'), 'right_thigh', ['horizontal', 'vertical'], ['horizontal'], []], # R ...
-    [('left_knee', 'left_ankle'), 'left_calf', ['horizontal', 'vertical'], ['horizontal'], []], # L calf alignment
-    [('right_knee', 'right_ankle'), 'right_calf', ['horizontal', 'vertical'], ['horizontal'], []], # R ...
-    [('left_shoulder', 'left_elbow'), 'left_upperarm', ['horizontal', 'vertical'], ['vertical'], []], # L upper arm alignment
-    [('right_shoulder', 'right_elbow'), 'right_upperarm', ['horizontal', 'vertical'], ['vertical'], []], # R ...
-    [('left_elbow', 'left_wrist'), 'left_forearm', ['horizontal', 'vertical'], ['vertical'], []], # L forearm alignment 
-    [('right_elbow', 'right_wrist'), 'right_forearm', ['horizontal', 'vertical'], ['vertical'], []], # R ...
-    [('pelvis', 'left_shoulder'), 'left_backdiag', ['horizontal'], [], [('horizontal', 1)]], # support for back/torso horizontality
-    [('pelvis', 'right_shoulder'), 'right_backdiag', ['horizontal'], [], [('horizontal', 1)]], # support for back/torso horizontality
-    [('pelvis', 'neck'), 'torso', ['vertical'], [], []], # back/torso alignment
-    [('left_hand', 'right_hand'), f'{PLURAL_KEY}_hands', ['horizontal'], [], [('horizontal', 1)]],
-    [('left_foot', 'right_foot'), f'{PLURAL_KEY}_feet', ['horizontal'], [], [('horizontal', 1)]],
+    [('left_hip', 'left_knee'), 'left_thigh', ['horizontal', 'vertical'], ['horizontal'], [], ['horizontal']], # L thigh alignment
+    [('right_hip', 'right_knee'), 'right_thigh', ['horizontal', 'vertical'], ['horizontal'], [], ['horizontal']], # R ...
+    [('left_knee', 'left_ankle'), 'left_calf', ['horizontal', 'vertical'], ['horizontal'], [], ['horizontal']], # L calf alignment
+    [('right_knee', 'right_ankle'), 'right_calf', ['horizontal', 'vertical'], ['horizontal'], [], ['horizontal']], # R ...
+    [('left_shoulder', 'left_elbow'), 'left_upperarm', ['horizontal', 'vertical'], ['vertical'], [], ['horizontal', 'vertical']], # L upper arm alignment
+    [('right_shoulder', 'right_elbow'), 'right_upperarm', ['horizontal', 'vertical'], ['vertical'], [], ['horizontal', 'vertical']], # R ...
+    [('left_elbow', 'left_wrist'), 'left_forearm', ['horizontal', 'vertical'], ['vertical'], [], ['horizontal', 'vertical']], # L forearm alignment 
+    [('right_elbow', 'right_wrist'), 'right_forearm', ['horizontal', 'vertical'], ['vertical'], [], ['horizontal', 'vertical']], # R ...
+    [('pelvis', 'left_shoulder'), 'left_backdiag', ['horizontal'], [], [('horizontal', 1)], []], # support for back/torso horizontality
+    [('pelvis', 'right_shoulder'), 'right_backdiag', ['horizontal'], [], [('horizontal', 1)], []], # support for back/torso horizontality
+    [('pelvis', 'neck'), 'torso', ['vertical'], [], [], []], # back/torso alignment
+    [('left_hand', 'right_hand'), f'{PLURAL_KEY}_hands', ['horizontal'], [], [('horizontal', 1)], []],
+    [('left_foot', 'right_foot'), f'{PLURAL_KEY}_feet', ['horizontal'], [], [('horizontal', 1)], []],
 ]
 
 
@@ -353,34 +483,17 @@ RELATIVEVAXIS_POSECODES = [
 #*************#
 
 ONGROUND_POSECODES = [
-    [('left_knee'), 'left_knee', ['on_ground'], [], [('on_ground', 1)]],
-    [('right_knee'), 'right_knee', ['on_ground'], [], [('on_ground', 1)]],
-    [('left_foot'), 'left_foot', ['on_ground'], [], [('on_ground', 1)]],
-    [('right_foot'), 'right_foot', ['on_ground'], [], [('on_ground', 1)]],
+    [('left_knee'), 'left_knee', ['on_ground'], [], [('on_ground', 1)], []],
+    [('right_knee'), 'right_knee', ['on_ground'], [], [('on_ground', 1)], []],
+    [('left_foot'), 'left_foot', ['on_ground'], [], [('on_ground', 1)], []],
+    [('right_foot'), 'right_foot', ['on_ground'], [], [('on_ground', 1)], []],
+    # ADDED_FOR_MODIFIERS
+    [('right_hand'), 'right_hand', ['on_ground'], [], [], ['on_ground']],
+    [('left_hand'), 'left_hand', ['on_ground'], [], [], ['on_ground']],
 ]
 
 
 # ADD_POSECODE_KIND (use a new '#***#' box, and define related posecodes below it)
-
-
-##############################
-## ALL ELEMENTARY POSECODES ##
-##############################
-
-ALL_ELEMENTARY_POSECODES = {
-    "angle": ANGLE_POSECODES,
-    "distance": DISTANCE_POSECODES,
-    "relativePosX": [[p[0], p[1], p[2][0], p[3][0], p[4][0]] for p in RELATIVEPOS_POSECODES if p[2][0]],
-    "relativePosY": [[p[0], p[1], p[2][1], p[3][1], p[4][1]] for p in RELATIVEPOS_POSECODES if p[2][1]],
-    "relativePosZ": [[p[0], p[1], p[2][2], p[3][2], p[4][2]] for p in RELATIVEPOS_POSECODES if p[2][2]],
-    "relativeVAxis": RELATIVEVAXIS_POSECODES,
-    "onGround": ONGROUND_POSECODES,
-    # ADD_POSECODE_KIND
-}
-
-# kinds of posecodes for which the joints in the joint sets will *systematically*
-# not be used for description (using the focus_body_part instead) 
-POSECODE_KIND_FOCUS_JOINT_BASED = ['angle', 'relativeVAxis', 'onGround'] # ADD_POSECODE_KIND
 
 
 #####################
@@ -410,6 +523,9 @@ POSECODE_KIND_FOCUS_JOINT_BASED = ['angle', 'relativeVAxis', 'onGround'] # ADD_P
 #       - a boolean indicating whether this is a rare posecode.
 #           NOTE: super-posecodes are assumed to be always eligible for
 #           description (otherwise, no need to define them in the first place).
+#       - a boolean indicating whether the super-posecode provides 'absolute'
+#           information, ie. the super-posecode could be used to describe pose
+#           relationships.
 # - dict: elementary posecode requirements to produce the super-posecodes
 #       - key: super-posecode ID
 #       - value: list of the different ways to produce the super-posecode, where
@@ -421,18 +537,19 @@ POSECODE_KIND_FOCUS_JOINT_BASED = ['angle', 'relativeVAxis', 'onGround'] # ADD_P
 
 
 SUPER_POSECODES = [
-    ['torso_horizontal', [('torso'), 'horizontal'], True],
-    ['body_bent_left', [('body'), 'bent_left'], False],
-    ['body_bent_right', [('body'), 'bent_right'], False],
-    ['body_bent_backward', [('body'), 'bent_backward'], True],
-    ['body_bent_forward', [('body'), 'bent_forward'], False],
-    ['kneel_on_left', [('body'), 'kneel_on_left'], True],
-    ['kneel_on_right', [('body'), 'kneel_on_right'], True],
-    ['kneeling', [('body'), 'kneeling'], True],
-    ['hands_shoulder_width', [(f'{PLURAL_KEY}_hands'), 'shoulder width'], True],
-    ['feet_shoulder_width', [(f'{PLURAL_KEY}_feet'), 'shoulder width'], False],
+    ['torso_horizontal', [('torso'), 'horizontal'], True, True],
+    ['body_bent_left', [('body'), 'bent_left'], False, False],
+    ['body_bent_right', [('body'), 'bent_right'], False, False],
+    ['body_bent_backward', [('body'), 'bent_backward'], True, False],
+    ['body_bent_forward', [('body'), 'bent_forward'], False, False],
+    ['kneel_on_left', [('body'), 'kneel_on_left'], True, False],
+    ['kneel_on_right', [('body'), 'kneel_on_right'], True, False],
+    ['kneeling', [('body'), 'kneeling'], True, False],
+    ['hands_shoulder_width', [(f'{PLURAL_KEY}_hands'), 'shoulder width'], True, True],
+    ['feet_shoulder_width', [(f'{PLURAL_KEY}_feet'), 'shoulder width'], False, True],
     # ADD_SUPER_POSECODE
 ]
+
 
 SUPER_POSECODES_REQUIREMENTS = {
     'torso_horizontal': [
@@ -495,6 +612,60 @@ SUPER_POSECODES_REQUIREMENTS = {
 }
 
 
+upper_limbs = ['shoulder', 'upperarm', 'elbow', 'forearm']
+lower_limbs = ['hip', 'thigh', 'knee', 'shin']
+
+# add some super-posecodes in batch (for simplicity)
+# ADDED_FOR_MODIFIERS
+for side1 in ['left', 'right']:
+    for bp1 in ['hand', 'foot']:
+        for side2 in ['left', 'right']:
+            for bp2 in upper_limbs + lower_limbs:
+                if side1 == side2:
+                    if bp1 == "hand" and bp2 in upper_limbs:
+                        continue
+                    elif bp1 == "foot" and bp2 in lower_limbs:
+                        continue
+                for intptt in ['xy-aligned', 'xz-aligned', 'yz-aligned']:
+                    # add super-posecode
+                    sp_id = f'{intptt}_{side1[0].upper()}{bp1}_{side2[0].upper()}{bp2}'
+                    bp1_, bp2_ = f'{side1}_{bp1}', f'{side2}_{bp2}'
+                    SUPER_POSECODES.append([sp_id, [(bp1_, bp2_), intptt], False, True])
+                    axis = intptt.replace('-aligned', '')
+                    SUPER_POSECODES_REQUIREMENTS[sp_id] = [[[f'relativePos{a.upper()}', (bp1_, bp2_), f'{a}-aligned'] for a in axis] + \
+                                                           [['distance', (bp1_, bp2_), x]] for x in ['close', 'shoulder width', 'spread']]
+                    # add necessary elementary posecodes
+                    for a in axis:
+                        axis_id = {'x':0, 'y':1, 'z':2}[a]
+                        add_element_to_relativepos_posecodes((bp1_, bp2_), bp1_, axis_id, f'{a}-aligned', rare=False, support=1, absolute=False)
+                    for x in ['close', 'shoulder width', 'spread']:
+                        add_element_to_distance_posecodes((bp1_, bp2_), bp1_, x, rare=False, support=1, absolute=False)
+
+
+##############################
+## ALL ELEMENTARY POSECODES ##
+##############################
+
+# this section must happen after the super-posecode section, as some elementary
+# posecodes may be added automatically while defining super-posecodes
+
+ALL_ELEMENTARY_POSECODES = {
+    "angle": ANGLE_POSECODES,
+    "distance": DISTANCE_POSECODES,
+    "relativePosX": [[p[0], p[1], p[2][0], p[3][0], p[4][0], p[5][0]] for p in RELATIVEPOS_POSECODES if p[2][0]],
+    "relativePosY": [[p[0], p[1], p[2][1], p[3][1], p[4][1], p[5][1]] for p in RELATIVEPOS_POSECODES if p[2][1]],
+    "relativePosZ": [[p[0], p[1], p[2][2], p[3][2], p[4][2], p[5][2]] for p in RELATIVEPOS_POSECODES if p[2][2]],
+    "relativeVAxis": RELATIVEVAXIS_POSECODES,
+    "onGround": ONGROUND_POSECODES,
+    # ADD_POSECODE_KIND
+}
+
+# kinds of paircodes for which the joints in the joint sets will *systematically*
+# not be used as main subject for description (the pipeline will resort to the
+# focus_body_part instead)
+POSECODE_KIND_FOCUS_JOINT_BASED = ['angle', 'relativeVAxis', 'onGround'] # ADD_POSECODE_KIND
+
+
 ################################################################################
 #                                                                              #
 #                   POSECODE SELECTION                                         #
@@ -506,10 +677,10 @@ SUPER_POSECODES_REQUIREMENTS = {
 # - eligible posecode interpretations are defined above in section "POSECODE
 #     EXTRACTION" for simplicity; 
 # - rare (unskippable) & trivial posecodes were determined through satistical
-#     studies (see corresponding section in captioning.py) and information was
+#     studies (see corresponding section in posescript/captioning.py) and information was
 #     later reported above; 
 # - ripple effect rules based on transitive relations are directly computed
-#     during the captioning process (see captioning.py).
+#     during the captioning process (see posescript/captioning.py).
 #
 # We report below information about random skip and ripple effect rules based on
 # statistically frequent pairs and triplets of posecodes.
@@ -591,6 +762,8 @@ STAT_BASED_RIPPLE_EFFECT_RULES = [
         ['[relativePosZ] L/R knee (behind)', '[relativeVAxis] L thigh (horizontal)', '[relativePosZ] L foot - torso (behind)'],
         ['[relativePosZ] L/R knee (front)', '[relativeVAxis] L thigh (vertical)', '[relativePosZ] R foot - torso (behind)']
     ]
+# NOTE: this list has not been updated after adding the posecodes marked with
+# ADDED_FOR_MODIFIERS
 
 
 ################################################################################
@@ -601,23 +774,6 @@ STAT_BASED_RIPPLE_EFFECT_RULES = [
 
 # Define the proportion in which an aggregation rule can be applied
 PROP_AGGREGATION_HAPPENS = 0.95
-
-# Some special textual keys to help processing
-NO_VERB_KEY = '<no_verb>'
-MULTIPLE_SUBJECTS_KEY = '<multiple_subjects>'
-JOINT_BASED_AGGREG_KEY = '<joint_based_aggreg>'
-
-# From simple body parts to larger entities (assume side-preservation)
-ENTITY_AGGREGATION = {
-    ('wrist', 'elbow'):'arm',
-    ('hand', 'elbow'):'arm',
-    ('ankle', 'knee'):'leg',
-    ('foot', 'knee'):'leg',
-    ('forearm', 'upperarm'):'arm',
-    ('calf', 'thigh'):'leg'}
-# make it possible to query in any order
-d = {(b,a):c for (a,b),c in ENTITY_AGGREGATION.items()}
-ENTITY_AGGREGATION.update(d)
 
 
 ################################################################################
@@ -649,12 +805,6 @@ DETERMINERS_PROP = [0.5, 0.3, 0.1, 0.1]
 TEXT_TRANSITIONS = [' while ', ', ', '. ', ' and ', ' with ']
 TEXT_TRANSITIONS_PROP = [0.2, 0.2, 0.2, 0.2, 0.2]
 
-# Specific plural rules
-PLURALIZE = {
-    "foot":"feet",
-    "calf":"calves"
-}
-
 # Define opposite interpretation correspondences to translate a posecode where
 # "joint 1 is studied with regard to joint 2" by a posecode where "joint 2 is
 # studied with regard to joint 1" (when joints are taken in reverse order, the
@@ -670,7 +820,12 @@ OPPOSITE_CORRESP = {
     'close':'close',
     'shoulder width':'shoulder width',
     'spread':'spread',
-    'wide':'wide'}
+    'wide':'wide',
+    'on_ground':'on_ground',
+    'x-aligned':'x-aligned',
+    'y-aligned':'y-aligned',
+    'z-aligned':'z-aligned',
+    }
     # ADD_POSECODE_KIND: add interpretations if there are some new 
     # ADD_SUPER_POSECODE
 
@@ -700,7 +855,7 @@ OPPOSITE_CORRESP = {
 #
 # Interpretations that can be worded in 1 or 2-component sentences at random
 # ADD_POSECODE_KIND, ADD_SUPER_POSECODE: add interpretations if there are some new 
-# (currently, this is only true for distance posecodes)
+# (currently, this holds only for distance posecodes)
 OK_FOR_1CMPNT_OR_2CMPNTS = POSECODE_OPERATORS_VALUES["distance"]["category_names"]
 
 subj = "{} %s"
@@ -760,6 +915,8 @@ ENHANCE_TEXT_1CMPNT = {
         [f"{subj} {c}" for c in flatten_list([[f"kneeling on {d} left knee", f"kneeling on {d} left leg", f"on {d} left knee"] for d in ['the', 'their']])],
     "kneel_on_right":
         [f"{subj} {c}" for c in flatten_list([[f"kneeling on {d} right knee", f"kneeling on {d} right leg", f"on {d} right knee"] for d in ['the', 'their']])],
+    "on_ground":
+        [f"{subj} {c}" for c in ["on the ground", "on the floor", "down on the ground"]],
     # ADD_POSECODE_KIND: add template sentences for new interpretations if any 
     # ADD_SUPER_POSECODE
 }
@@ -786,6 +943,12 @@ ENHANCE_TEXT_2CMPNTS = {
         [f"{subj} {c} {sj}" for c in ["behind", "in the back of", "located behind"]],
     "front":
         [f"{subj} {c} {sj}" for c in ["in front of", "ahead of", "located in front of"]],
+    "xy-aligned": # can only move along the z axis
+        [f"{subj} {c} {sj}" for c in ["horizontally aligned with", "at the same height as", "level in height with"]],
+    "xz-aligned": # can only move along the y axis
+        [f"{subj} {c} {sj}" for c in ["vertically aligned with", "vertically in line with"]],
+    "yz-aligned": # can only move along the x axis
+        [f"{subj} {c} {sj}" for c in ["at the same height as", "even in height with", "level with", "horizontally aligned with"]],
     # ADD_POSECODE_KIND: add interpretations if there are some new 
     # ADD_SUPER_POSECODE
     }

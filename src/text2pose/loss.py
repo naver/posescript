@@ -7,15 +7,15 @@ import numpy as np
 def BBC(scores):
     # build the ground truth label tensor: the diagonal corresponds to the
     # correct classification
-    batch_size = scores.shape[0]
-    GT_labels = torch.arange(batch_size).long()
-    GT_labels = torch.autograd.Variable(GT_labels)
-    if torch.cuda.is_available():
-        GT_labels = GT_labels.cuda()
-    
+    GT_labels = torch.arange(scores.shape[0], device=scores.device).long()
     loss = F.cross_entropy(scores, GT_labels) # mean reduction
-
     return loss
+
+
+def symBBC(scores):
+    x2y_loss = BBC(scores)
+    y2x_loss = BBC(scores.t())
+    return (x2y_loss + y2x_loss) / 2.0
 
 
 def laplacian_nll(x_tilde, x, log_sigma):
@@ -30,5 +30,3 @@ def gaussian_nll(x_tilde, x, log_sigma):
     log_norm = - 0.5 * (np.log(2 * np.pi) + log_sigma)
     log_energy = - 0.5 * F.mse_loss(x_tilde, x, reduction='none') / torch.exp(log_sigma)
     return - (log_norm + log_energy)
-        
-        

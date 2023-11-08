@@ -1,40 +1,83 @@
-# Text2Pose: 3D Human Poses from Natural Language
+# 3D Human Poses from/with Natural Language.
 
-This repository is the official PyTorch implementation of the paper ["PoseScript: 3D Human Poses from Natural Language"](https://europe.naverlabs.com/research/computer-vision/posescript/), accepted at [ECCV 2022](https://eccv2022.ecva.net/).
+This repository groups the official PyTorch implementations for the following two papers: 
+* **["PoseScript: 3D Human Poses from Natural Language"](https://europe.naverlabs.com/research/computer-vision/posescript/)**, (**ECCV 2022**).
+  *See branch `posescript` for the original code version.*
+* **["PoseFix: Correcting 3D Human Poses with Natural Language"](https://europe.naverlabs.com/research/computer-vision/posefix/)**, (**ICCV 2023**)
 
 ![Text2Pose project](./images/main_picture.png)
 
-This code is divided in 3 parts, for the automatic captioning pipeline, the text-to-pose retrieval model and the text-conditioned pose generation model.
+The **PoseScript** ([download last version](https://download.europe.naverlabs.com/ComputerVision/PoseScript/posescript_release_v2.zip)) and the **PoseFix** ([download](https://download.europe.naverlabs.com/ComputerVision/PoseFix/posefix_dataset_release.zip)) datasets contain both human-written texts collected on Amazon Mechanical Turk and texts produced by the above-mentionned pipelines. Once downloaded, [explore PoseScript](./src/text2pose/posescript/README.md#🔮-take-a-quick-look) & [explore PoseFix](./src/text2pose/posefix/README.md#🔮-take-a-quick-look).
 
-The PoseScript dataset, introduced in the paper, contains both human-written pose descriptions collected on Amazon Mechanical Turk and automatic captions; it can be downloaded [here](https://download.europe.naverlabs.com/ComputerVision/PoseScript/posescript_dataset_release.zip).
+This code is divided in several parts, presented below. Click on the links to access to the respective READMEs, so as to get more details, to get instructions to train & evaluate the models, or to explore their results.
+<!-- must use spaces for the markdown to show -->
+<table>
+<tbody>
+<tr>
+  <th>Dataset</th>
+  <th align="center">Related Tasks</th>
+</tr>
+<tr>
+  <td align="center">PoseScript</td>
+  <td>
+
+* [automatic captioning pipeline](./src/text2pose/posescript/README.md) *(producing descriptions)*
+* [text-to-pose retrieval model](./src/text2pose/retrieval/README.md)
+* [text-conditioned pose generation model](./src/text2pose/generative/README.md)
+* [pose description generation model](./src/text2pose/generative_caption/README.md)
+
+  </td>
+</tr>
+<tr>
+  <td align="center">PoseFix</td>
+  <td>
+
+* [automatic comparative pipeline](./src/text2pose/posefix/README.md) *(producing modifiers)*
+* [pose-pair-to-instruction retrieval model](./src/text2pose/retrieval_modifier/README.md)
+* [text-guided pose editing model](./src/text2pose/generative_B/README.md)
+* [pose-based correctional text generation model](./src/text2pose/generative_modifier/README.md)
+      
+  </td>
+</tr>
+</tbody>
+</table>
 
 ## Setup
 
 
 #### :snake: Create python environment
 
+<details>
+<summary>Click for details.</summary>
 This code was tested in a python 3.7 environment.
 
 From the main code directory:
 
-```
+```bash
 pip install -r requirements.txt
 python setup.py develop
 ```
 
+If problems with OpenGL (setting: linux, anaconda3), check [here](https://stackoverflow.com/a/72427700).
+
 **Note**: using cuda version 10.2 (please modify *requirements.txt* otherwise).
 
-You may have to run also the following in a python interpreter:
-```
+You may also have to run the following in a python interpreter:
+```python
 import nltk
 nltk.download('punkt')
 ```
+</details>
+
 
 #### :inbox_tray: Download data
 
-The PoseScript dataset links human-written descriptions and automatically generated descriptions to poses from the AMASS dataset.
+<details>
+<summary>Click for details.</summary>
+Both the PoseScript and the PoseFix datasets link human-written texts and automatically generated texts to poses from the AMASS dataset.
 
-- The PoseScript dataset can be downloaded [here](https://download.europe.naverlabs.com/ComputerVision/PoseScript/posescript_dataset_release.zip).
+- The PoseScript dataset can be downloaded [here](https://download.europe.naverlabs.com/ComputerVision/PoseScript/posescript_release_v2.zip).
+- The PoseFix dataset can be downloaded [here](https://download.europe.naverlabs.com/ComputerVision/PoseFix/posefix_dataset_release.zip).
 - The AMASS dataset can be downloaded from [here](https://amass.is.tue.mpg.de/).
   <details>
     <summary>List of considered AMASS sub-datasets</summary>
@@ -59,118 +102,143 @@ The PoseScript dataset links human-written descriptions and automatically genera
     * TCDHands
     * TotalCapture
     * Transitions
+
     *Note: other sub-datasets in AMASS were probably added after we downloaded AMASS, which is why they are not considered there.*
   </details>
 - The BABEL dataset can be downloaded from [here](https://babel.is.tue.mpg.de/data.html).
 - The SMPL-H body models can be downloaded from [here](https://mano.is.tue.mpg.de/) by clicking on the link _"Extended SMPL+H model"_ on the download page.
 - The GloVe pretrained word embeddings can be downloaded [here](https://nlp.stanford.edu/data/glove.840B.300d.zip).
+</details>
 
 
 #### :open_file_folder: Define important paths
-*:exclamation:Please change paths in ./src/text2pose/config.py following your own preferences.*
+
+<details>
+<summary>Click for details.</summary>
+
+*:warning: Please change paths in ./src/text2pose/config.py following your own preferences.*
 - ***GENERAL_EXP_OUTPUT_DIR***: where models will be saved (along with logs, generated poses...)
-- ***POSESCRIPT_LOCATION***: where PoseScript is located (vocabulary files will be generated into this directory).
-- ***SMPL_BODY_MODEL_PATH***: where SMPL-H body models are located.
+- ***POSESCRIPT_LOCATION***: where PoseScript is located (vocabulary files & files related to automatic captions will be generated into this directory).
+- ***POSESFIX_LOCATION***: where PoseFix is located (vocabulary files & files related to automatic modifiers will be generated into this directory).
+- ***SMPLH_BODY_MODEL_PATH***: where SMPL-H body models are located.
 - ***AMASS_FILE_LOCATION***: where AMASS is located.
 - ***BABEL_LOCATION***: where BABEL is located.
 - ***GLOVE_DIR***: where *glove.840B.300d.txt* is located (unzip the downloaded archive).
+- ***TRANSFORMER_CACHE_DIR***: where the pretrained transformer checkpoints are located; see section _:books: Download language models_.
 
 **Note**: the file *./src/text2pose/shortname_2_model_path.txt* (initially empty) holds correspondences between full model paths and model shortnames, for readable communication between generative and retrieval models. Lines should have the following format:
 ```
 <model_shortname>    <model_full_path>
 ```
-
+</details>
 
 #### :closed_book: Generate the vocabulary
-```
+<!-- Needed for text generation, and if using the glovebigru text encoder -->
+
+<details>
+<summary>Click for details.</summary>
+
+```bash
 cd src/text2pose
-python vocab.py --vocab_filename 'vocab3893.pkl' --caption_files 'human3893.json' 'automatic_A.json' 'automatic_B.json' 'automatic_C.json' 'automatic_D.json' 'automatic_E.json' 'automatic_F.json'
+
+# posescript vocab (needed to run the pretrained pose description generation model)
+python vocab.py --dataset posescript \
+--caption_files 'posescript_human_6293.json' 'posescript_auto_100k.json' \
+--new_word_list '(' ')' '.' 'a' 'a-pose' 'a-shape' 'about' 'abstract' 'acting' 'action' 'activities' 'adjust' 'adjusting' 'adjustment' 'aim' 'aiming' 'aims' 'an' 'animal' 'argument' 'arm' 'arms' 'art' 'at' 'aupplauding' 'back' 'backwards' 'balance' 'balancing' 'ball' 'bartender' 'beaming' 'begging' 'behaving' 'behavior' 'bend' 'bending' 'bent' 'bird' 'body' 'bow' 'bowed' 'bowing' 'bump' 'bumping' 'call' 'cartwheel' 'catch' 'catching' 'celebrate' 'celebrating' 'charge' 'charging' 'check' 'checking' 'cheering' 'chicken' 'choking' 'chop' 'chopping' 'circular' 'clap' 'clapping' 'clasp' 'clasping' 'clean' 'cleaning' 'close' 'closing' 'collapsing' 'communicate' 'communicating' 'conduct' 'conducting' 'consuming' 'cough' 'coughing' 'cower' 'cowering' 'crawl' 'crawling' 'crossed' 'crossed-limbs' 'crossing' 'crouch' 'crouching' 'cry' 'crying' 'cuddling' 'cursty' 'curtsy' 'curtsying' 'cut' 'cutting' 'dance' 'dancing' 'defensive' 'delivering' 'desesperate' 'desesperation' 'despair' 'despairing' 'desperate' 'dip' 'direction' 'disagree' 'dive' 'diving' 'do' 'doing' 'down' 'dribble' 'dribbling' 'drink' 'drinking' 'drive' 'driving' 'drunk' 'drunken' 'duck' 'eat' 'eating' 'embracing' 'escaping' 'evade' 'evading' 'exercices' 'exercise/training' 'exercising' 'face' 'fall' 'falling' 'feet' 'fidget' 'fidgeting' 'fidgets' 'fight' 'fighting' 'fire' 'firing' 'fish' 'fishing' 'flail' 'flailing' 'flap' 'flapping' 'flip' 'flipping' 'floor' 'fluttering' 'food' 'foot' 'for' 'forward' 'gain' 'gesture' 'gesturing' 'get' 'getting' 'gifting' 'giggling' 'give' 'giving' 'glide' 'gliding' 'going' 'golf' 'golfing' 'grab' 'grabbing' 'grasp' 'grasping' 'greet' 'greeting' 'ground' 'gun' 'hacking' 'hair' 'hand' 'handling' 'hands' 'handstand' 'handstanding' 'hang' 'hanging' 'having' 'head' 'headstand' 'headstanding' 'hello' 'hi' 'hit' 'hitting' 'holding' 'hop' 'hopping' 'hug' 'hugging' 'imitating' 'in' 'incline' 'inclined' 'inclining' 'injured' 'inspecting' 'instrument' 'interact' 'interacting' 'interface' 'into' 'inward' 'jacks' 'jog' 'jogging' 'juggle' 'juggling' 'jump' 'jumping' 'kick' 'kicking' 'knee' 'kneel' 'kneeled' 'kneeling' 'knees' 'knelt' 'knock' 'knocking' 'lamenting' 'laugh' 'laughing' 'lead' 'leading' 'lean' 'leaning' 'leap' 'leaping' 'leg' 'legs' 'lick' 'licking' 'lie' 'lift' 'lifting' 'like' 'limbs' 'limp' 'limping' 'listen' 'listening' 'look' 'looking' 'lower' 'lowering' 'lunge' 'lunging' 'lying' 'making' 'march' 'marching' 'martial' 'middle' 'mime' 'mimicking' 'miming' 'misc' 'mix' 'mixing' 'moonwalk' 'moonwalking' 'motion' 'move' 'movement' 'movements' 'moving' 'musique' 'navigate' 'object' 'of' 'on' 'open' 'opening' 'operate' 'operating' 'or' 'orchestra' 'original' 'over' 'part' 'pat' 'patting' 'perform' 'performance' 'performing' 'person' 'phone' 'picking' 'place' 'placing' 'play' 'playing' 'plays' 'plead' 'pleading' 'point' 'pointing' 'pose' 'poses' 'position' 'practicing' 'pray' 'prayer' 'praying' 'prepare' 'preparing' 'press' 'pressing' 'protect' 'protecting' 'punch' 'punching' 'quivering' 'raising' 'reaching' 'relax' 'relaxation' 'relaxing' 'release' 'releasing' 'remove' 'removing' 'reveal' 'rocking' 'rolling' 'rope' 'rub' 'rubbing' 'run' 'running' 'salute' 'saluting' 'saying' 'scratch' 'scratching' 'search' 'searching' 'seizing' 'series' 'shake' 'shaking' 'shape' 'shave' 'shaving' 'shivering' 'shooting' 'shoulder' 'showing' 'shrug' 'shrugging' 'shuffle' 'side' 'sideways' 'sign' 'sit' 'sitting' 'skate' 'skating' 'sketch' 'skip' 'skipping' 'slash' 'slicing' 'slide' 'sliding' 'slightly' 'smacking' 'smell' 'smelling' 'snack' 'snacking' 'sneak' 'sneaking' 'sneeze' 'sneezing' 'sobbing' 'some' 'someone' 'something' 'somethings' 'speaking' 'spin' 'spinning' 'sport' 'sports' 'spread' 'spreading' 'squat' 'squatting' 'stagger' 'staggering' 'stances' 'stand' 'standing' 'staring' 'step' 'stepping' 'stick' 'stomp' 'stomping' 'stop' 'strafe' 'strafing' 'stretch' 'stretching' 'stroke' 'stroking' 'stumble' 'stumbling' 'style' 'styling' 'sudden' 'support' 'supporting' 'sway' 'swaying' 'swim' 'swimming' 'swing' 'swinging' 'swipe' 'swiping' 't' 't-pose' 't-shape' 'take/pick' 'taking' 'tap' 'tapping' 'telephone' 'tentative' 'the' 'things' 'throw' 'throwing' 'tie' 'tiptoe' 'tiptoeing' 'tiptoes' 'to' 'touch' 'touching' 'training' 'transition' 'trashing' 'trip' 'tripping' 'try' 'trying' 'tumbling' 'turn' 'turning' 'twist' 'twisting' 'twitching' 'tying' 'uncross' 'unknown' 'up' 'up/down' 'upper' 'using' 'vocalise' 'vocalizing' 'voice' 'voicing' 'vomit' 'vomitting' 'waist' 'wait' 'waiting' 'walk' 'walking' 'wash' 'washing' 'wave' 'waving' 'weeping' 'wiggle' 'wiggling' 'with' 'with/use' 'wobble' 'wobbling' 'worry' 'worrying' 'wrist' 'wrists' 'write' 'writing' 'yawn' 'yawning' 'yoga' 'zombie' \
+--make_compatible_to_side_flip \
+--vocab_filename 'vocab_posescript_6293_auto100k.pkl'
+
+# posefix vocab (needed to run the pose-based correctional text generation model)
+python vocab.py --dataset posefix \
+--caption_files 'posefix_human_6157.json' 'posefix_auto_135305.json' 'posefix_paraphrases_4284.json' \
+--make_compatible_to_side_flip \
+--vocab_filename vocab_posefix_6157_pp4284_auto.pkl
+
+# posemix vocab
+python vocab.py --dataset posemix \
+--caption_files '<POSESCRIPT_LOCATION>/posescript_human_6293.json' '<POSEFIX_LOCATION>/posefix_human_6157.json' '<POSEFIX_LOCATION>/posefix_paraphrases_4284.json' \
+--make_compatible_to_side_flip \
+--vocab_filename vocab_posemix_PS6193_PF6157.pkl 
 ```
-The vocabury will be saved in ***POSESCRIPT_LOCATION***.
 
-Vocab size is expected to be 1658 and includes 4 special tokens.
+The filenames provided in argument for generating the PoseScript or the PoseFix vocabularies are expected to be in ***POSESCRIPT_LOCATION*** and ***POSEFIX_LOCATION*** respectively. The vocabularies will be saved in those same directories. They are expected to be of size 2158 for PoseScript and 2374 for PoseFix (1112 when not considering the paraphrases).
+</details>
 
 
-## Download and test pretrained models out of the box
+#### :books: Download language models
 
-To test pretrained retrieval and generative models right out of the box:
+<details>
+<summary>Click for details.</summary>
 
-- [:inbox_tray: Download pretrained models](https://download.europe.naverlabs.com/ComputerVision/PoseScript/eccv22_posescript_models.zip)
-- Unzip the archive and place the content of the resulting directory in ***GENERAL_EXP_OUTPUT_DIR***
-- Add the following lines in file *./src/text2pose/shortname_2_model_path.txt* (simply replace `<GENERAL_EXP_OUTPUT_DIR>` by its proper value):
+Download HuggingFace checkpoints, by running the following python script:
+```python
+import os
+from transformers import AutoTokenizer, AutoModel
+import config
+
+model_type = "distilbert-base-uncased"
+
+# download the tokenizer
+tokenizer = AutoTokenizer.from_pretrained(model_type)
+tokenizer.save_pretrained(os.path.join(config.TRANSFORMER_CACHE_DIR, model_type))
+
+# download the encoder
+text_enc = AutoModel.from_pretrained(model_type)
+text_enc.save_pretrained(os.path.join(config.TRANSFORMER_CACHE_DIR, model_type))
+```
+</details>
+
+## Explore datasets
+
+After downloading the datasets, run the following:
+
+```bash
+streamlit run <dataset>/explore_<dataset>.py
+```
+
+with `<dataset>` being either `posescript` or `posefix`.
+
+## Visualize results of pretrained models
+
+- [:inbox_tray: **Download** pretrained models](./pretrained_models.md#download-links)
+- **Unzip** the archive and place the content of the resulting directory in ***GENERAL_EXP_OUTPUT_DIR***
+- **Add lines** in file *./src/text2pose/shortname_2_model_path.txt* following this format:
   ```
-  ret_glovebigru_vocA1H1_dataA1    <GENERAL_EXP_OUTPUT_DIR>/PoseText_textencoder-glovebigru_vocA1H1_latentD512/train-posescript-A1/BBC/B32_Adam_lr0.0002_stepLR_lrstep20.0_lrgamma0.5/seed0/best_model.pth
-  ret_glovebigru_vocA1H1_dataA1ftH1    <GENERAL_EXP_OUTPUT_DIR>/PoseText_textencoder-glovebigru_vocA1H1_latentD512/train-posescript-H1/BBC/B32_Adam_lr0.0002_stepLR_lrstep20.0_lrgamma0.5_pretrained_ret_glovebigru_vocA1H1_dataA1/seed0/best_model.pth
-  gen_glovebigru_vocA1H1_dataA1    <GENERAL_EXP_OUTPUT_DIR>/CondTextPoser_textencoder-glovebigru_vocA1H1_latentD32/train-posescript-A1/wloss_kld0.2_v2v4.0_rot2.0_jts2.0_kldnpmul0.02_kldntmul0.0/B32_Adam_lr00001_wd0.0001/seed0/checkpoint_1999.pth
-  gen_glovebigru_vocA1H1_dataA1ftH1    <GENERAL_EXP_OUTPUT_DIR>/CondTextPoser_textencoder-glovebigru_vocA1H1_latentD32/train-posescript-H1/wloss_kld0.2_v2v4.0_rot2.0_jts2.0_kldnpmul0.02_kldntmul0.0/B32_Adam_lr1e-05_wd0.0001_pretrained_gen_glovebigru_vocA1H1_dataA1/seed0/checkpoint_1999.pth
+  <model shortname><4 spaces><path to the model>
   ```
+  You can copy lines from [here](./pretrained_models.md#references-in-shortname_2_model_path).
+
 - **Launch a demo**:
-  ```
+  ```bash
   streamlit run <type>/demo_<type>.py -- --model_path </path/to/model.pth>
   ```
   with:
-    - `<type>` being either `retrieval` or `generative`,
-    - `</path/to/model.pth>` being any of the model full paths indicated above for *./src/text2pose/shortname_2_model_path.txt*
-- **Evaluate the models**:
-  ```
-  bash <type>/script_<type>.py -a eval -c <model_shortname>
-  ```
-  with:
-    - `<type>` being either `retrieval` or `generative`, 
-    - `<shortname>` being any of the model shortnames indicated above for *./src/text2pose/shortname_2_model_path.txt*
+    - `<type>` being one of `retrieval`|`retrieval_modifier`|`generative`|`generative_B`|`generate_caption`|`generate_modifier`;
+    - `</path/to/model.pth>` being any model full path of the required type; if you followed to procedure, you can find them in *./src/text2pose/shortname_2_model_path.txt*
 
-  <details>
-  <summary>Result table</summary>
+## Train & Evaluate models
 
-    You should obtain something close to:
-
-    | Retrieval model shortname | Data | mRecall | R<sup>P2T</sup>@1 | R<sup>P2T</sup>@5 | R<sup>P2T</sup>@10 | R<sup>T2P</sup>@1 | R<sup>T2P</sup>@5 | R<sup>T2P</sup>@10 |
-    |---------------------------|------|---------|-----|-----|------|-----|-----|------|
-    | ret_glovebigru_vocA1H1_dataA1 *(seed 0)* | PoseScript-A1 | 74.7 | 47.7 | 78.4 | 87.0 | 58.0 | 85.6 | 91.6 |
-    | ret_glovebigru_vocA1H1_dataA1ftH1 *(seed 0)* | PoseScript-H1 | 32.3 | 12.8 | 34.1 | 45.1 | 15.0 | 37.1 | 49.5 |
-
-    | Generative model shortname | Data | FID | ELBO jts| ELBO vert | ELBO rot | mRecall R/G | mRecall G/R |
-    |----------------------------|------|-----|---------|-----------|----------|-------------|-------------|
-    | gen_glovebigru_vocA1H1_dataA1 *(seed 0)* | PoseScript-A1 | 0.49 | 1.06 | 1.35 | 0.75 | 29.4* | 55.1* |
-    | gen_glovebigru_vocA1H1_dataA1ftH1 *(seed 0)* | PoseScript-H1 | 0.48 | 0.52 | 1.11 | 0.48 | 20.0* | 30.4* |
-
-    <details>
-    <summary>Comments on the results.</summary>
-
-    **Please note that** (*):
-    - the computation of the G/R mRecall involves training a new retrieval model,
-    - values for G/R and R/G mRecalls can vary, as they involve training or evaluating models on pose samples selected at random, among those generated by the generative model for each caption. The values provided in the table result from a unique random run.
-    
-
-    **The results provided here differ from those in the ECCV version of the paper.** Indeed:
-    - Code has changed a bit when we fused the two repositories used initially for pose retrieval and pose generation respectively.
-    - We now consider all 52 joints of the SMPL-H model (instead of 24) as input and output; to avoid any problem when comparing the input pose and the generated pose in the loss reconstruction, but also to better model the hands, which are sometimes described by the annotators. Beside, we use the 3D SMPL-H body model from the [human_pose_prior](https://github.com/nghorbani/human_body_prior) library instead of the [smplx](https://github.com/vchoutas/smplx) one, in accordance with the AMASS data.
-    - The FID metric is now computed based on the poses generated with samples from the text distribution, instead of samples from the pose distribution.
-    </details>
-  </details>
-
-## The PoseScript Dataset & the captioning pipeline
-
-To explore the PoseScript dataset and get more details about it or the captioning pipeline, look [here](./src/text2pose/posescript/README.md).
-
-## Text-to-Pose Retrieval models
-
-See :memo: [instructions](./src/text2pose/retrieval/README.md) to train models, then evaluate them quantitatively and qualitatively (demo).
-
-## Text-conditioned Pose Generative models
-
-See :memo: [instructions](./src/text2pose/generative/README.md) to train models, then evaluate them quantitatively and qualitatively (demo).
+Please refer to the README of the model of interest in this repo subdirectories. Get quick access from the table at the top.
 
 ## Citation
 
-If you use this code or the PoseScript dataset, please cite the following paper:
+If you use this code, the PoseScript dataset or the PoseFix dataset, please cite the corresponding paper:
 
-```
-@inproceedings{posescript,
+```bibtex
+@inproceedings{delmas2022posescript,
   title={{PoseScript: 3D Human Poses from Natural Language}},
   author={{Delmas, Ginger and Weinzaepfel, Philippe and Lucas, Thomas and Moreno-Noguer, Francesc and Rogez, Gr\'egory}},
   booktitle={{ECCV}},
   year={2022}
+}
+```
+
+```bibtex
+@inproceedings{delmas2023posefix,
+  title={{PoseFix: Correcting 3D Human Poses with Natural Language}},
+  author={{Delmas, Ginger and Weinzaepfel, Philippe and Moreno-Noguer, Francesc and Rogez, Gr\'egory}},
+  booktitle={{ICCV}},
+  year={2023}
 }
 ```
 

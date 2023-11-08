@@ -1,231 +1,232 @@
 ##############################################################
 ## text2pose                                                ##
-## Copyright (c) 2022-present                               ##
+## Copyright (c) 2022, 2023                                 ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
-## Naver Corporation                                        ##
-## CC BY-NC-SA 4.0                                          ##
+## and Naver Corporation                                    ##
+## Licensed under the CC BY-NC-SA 4.0 license.              ##
+## See project root for license details.                    ##
 ##############################################################
 
-import os
+import torch
+import math
+import sys
 import shutil
-from pathlib import Path
-import time, datetime
-import json
-import numpy as np
+import os
+os.umask(0x0002)
+os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
-import torch 
-import torch.backends.cudnn as cudnn
-from torch.utils.tensorboard import SummaryWriter
-
-import text2pose.config as config
-from text2pose.option import get_args_parser, get_output_dir
-from text2pose.vocab import Vocabulary # needed
-from text2pose.data import PoseScript
-from text2pose.loss import BBC
-from text2pose.utils import MetricLogger, SmoothedValue
+from text2pose.option import get_args_parser
+from text2pose.trainer import GenericTrainer
 from text2pose.retrieval.model_retrieval import PoseText
 from text2pose.retrieval.evaluate_retrieval import compute_eval_metrics
+from text2pose.loss import BBC, symBBC
+from text2pose.data import PoseScript, PoseFix
+from text2pose.encoders.tokenizers import get_tokenizer_name
+from text2pose.data_augmentations import DataAugmentation
 
-os.umask(0x0002)
+import text2pose.config as config
+import text2pose.utils_logging as logging
 
 
-def main(args):
-    
-    # check if the model was already trained
-    ckpt_fname = os.path.join(args.output_dir, 'checkpoint_last.pth')
-    if os.path.isfile(ckpt_fname):
-        ckpt = torch.load(ckpt_fname, 'cpu')
-        if ckpt["epoch"] == args.epochs - 1:
-            print(f'Training already done ({args.epochs} epochs: checkpoint_last.pth)')
-            return
+################################################################################
 
-    args.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-    # fix the seed for reproducibility
-    seed = args.seed
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+class PoseTextTrainer(GenericTrainer):
 
-    cudnn.benchmark = True
+	def __init__(self, args):
+		super(PoseTextTrainer, self).__init__(args)
 
-    # load data
-    generated_pose_samples_path = None # default
-    if args.generated_pose_samples:
-        generated_pose_samples_model_path = (config.shortname_2_model_path[args.generated_pose_samples]).format(seed=args.seed)
-        generated_pose_samples_path = config.generated_pose_path % os.path.dirname(generated_pose_samples_model_path)
-    
-    print('Load training dataset')
-    dataset_train = PoseScript(version=args.dataset, split='train', text_encoder_name=args.text_encoder_name, caption_index='rand', generated_pose_samples_path=generated_pose_samples_path)
-    print(dataset_train, len(dataset_train))
-    data_loader_train = torch.utils.data.DataLoader(
-        dataset_train, sampler=None, shuffle=True,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=True,
-        drop_last=True,
-    )
-    print('Load validation dataset')
-    dataset_val = PoseScript(version=args.dataset, split='val', text_encoder_name=args.text_encoder_name, caption_index="deterministic-mix", generated_pose_samples_path=generated_pose_samples_path)
-    print(dataset_val, len(dataset_val))
-    
-    # set up models
-    print('Load model')
-    model = PoseText(text_encoder_name=args.text_encoder_name, latentD=args.latentD)
-    model.to(args.device)
-    
-    # optimizer 
-    assert args.optimizer=='Adam'
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+	
+	def load_dataset(self, split, caption_index, tokenizer_name=None):
+		
+		if tokenizer_name is None: tokenizer_name = get_tokenizer_name(self.args.text_encoder_name)
+		data_size = self.args.data_size if split=="train" else None
 
-    # scheduler
-    lr_scheduler = None
-    if args.lr_scheduler == "stepLR":
-        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer,
-												step_size=args.lr_step,
-												gamma=args.lr_gamma,
-												last_epoch=-1)
-   
-    # start or resume training
-    if os.path.isfile(ckpt_fname): # resume training
-        # checkpoint was loaded at the beginning
-        start_epoch = ckpt['epoch'] + 1
-        model.load_state_dict(ckpt['model'])
-        optimizer.load_state_dict(ckpt['optimizer'])
-        if lr_scheduler:
-            lr_scheduler.load_state_dict(ckpt['scheduler'])
-        best_score = ckpt['best_score']
-        print(f"Resume training from epoch {start_epoch}.")
-    else:
-        start_epoch = 0
-        best_score = None
-        if args.pretrained: # load pretrained weights
-            pretrained_path = (config.shortname_2_model_path[args.pretrained]).format(seed=args.seed)
-            print(f'Loading pretrained model: {pretrained_path}')
-            ckpt = torch.load(pretrained_path, 'cpu')
-            model.load_state_dict(ckpt['model'])
+		if "posescript" in self.args.dataset:
+			d = PoseScript(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, data_size=data_size)
+		elif "posefix" in self.args.dataset:
+			d = PoseFix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, data_size=data_size, posescript_format=True)
+		else:
+			raise NotImplementedError
+		return d
 
-    # tensorboard 
-    log_writer = SummaryWriter(log_dir=args.output_dir)
-    
-    # training process
-    start_time = time.time()
-    for epoch in range(start_epoch, args.epochs): 
 
-        # training
-        train_stats = one_epoch(
-            model,
-            data_loader=data_loader_train,
-            optimizer=optimizer,
-            epoch=epoch,
-            log_writer=log_writer,
-            args=args
-        )
+	def init_model(self):
+		print('Load model')
+		self.model = PoseText(text_encoder_name=self.args.text_encoder_name,
+							transformer_topping=self.args.transformer_topping,
+							latentD=self.args.latentD)
+		self.model.to(self.device)
 
-        # validation
-        val_stats = validate(model,
-            dataset=dataset_val,
-            device=args.device,
-            epoch=epoch,
-            log_writer=log_writer)
 
-        # save checkpoint
-        tosave = {'epoch': epoch,
-                'model': model.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'scheduler': lr_scheduler.state_dict() if lr_scheduler else None,
-                'args': args,
-                'best_score': best_score}
-        # ... current checkpoint
-        torch.save(tosave, ckpt_fname)
-        # ... most recent best model
-        if (not best_score) or (val_stats["mRecall"] > best_score):
-            best_score = val_stats["mRecall"]
-            shutil.copyfile(ckpt_fname, os.path.join(args.output_dir, 'best_model.pth'))
+	def get_param_groups(self):
+		param_groups = []
+		param_groups.append({'params': self.model.pose_encoder.parameters(), 'lr': self.args.lr*self.args.lrposemul})
+		param_groups.append({'params': self.model.text_encoder.parameters(), 'lr': self.args.lr*self.args.lrtextmul}) 
+		param_groups.append({'params': [self.model.loss_weight]})
+		return param_groups
 
-        # tensorboard
-        log_writer.flush()
 
-        # save logs
-        log_stats = {'epoch': epoch, 'lr': optimizer.param_groups[0]["lr"]}
-        log_stats.update(**train_stats)
-        log_stats.update(**val_stats)
-        with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
-            f.write(json.dumps(log_stats) + "\n")
+	def init_optimizer(self):
+		assert self.args.optimizer=='Adam'
+		param_groups = self.get_param_groups()
+		self.optimizer = torch.optim.Adam(param_groups, lr=self.args.lr)
 
-    total_time = time.time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print('Training time {}'.format(total_time_str))
-    
-    
-def one_epoch(model, data_loader, optimizer, epoch, args, log_writer=None):
 
-    metric_logger = MetricLogger(delimiter="  ")
-    metric_logger.add_meter('lr', SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    header = f'Epoch: [{epoch}]'
+	def init_lr_scheduler(self):
+		self.lr_scheduler = None
+		if self.args.lr_scheduler == "stepLR":
+			self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
+													step_size=self.args.lr_step,
+													gamma=self.args.lr_gamma,
+													last_epoch=-1)
 
-    model.train(True)
-        
-    for data_iter_step, item in enumerate(metric_logger.log_every(data_loader, args.log_step, header)):
 
-        # get data
-        poses = item['pose'].to(args.device)
-        caption_tokens = item['caption_tokens'].to(args.device)
-        caption_lengths = item['caption_lengths'].to(args.device)
-        caption_tokens = caption_tokens[:,:caption_lengths.max()] # truncate within the batch, based on the longest text 
-        
-        # compute scores
-        poses_features, texts_features = model(poses, caption_tokens, caption_lengths)
-        score_t2p = texts_features.mm(poses_features.t())
-        loss = BBC(score_t2p*model.loss_weight)
-        loss_value = loss.item()
-        
-        # step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+	def start_or_resume_training(self):
+		if os.path.isfile(self.ckpt_fname): # resume training
+			print("Resume training. Load weights from last checkpoint.")
+			ckpt = torch.load(self.ckpt_fname, 'cpu')
+			self.start_epoch = ckpt['epoch'] + 1
+			self.best_score = ckpt.get('best_score', 0.0)
+			self.model.load_state_dict(ckpt['model'])
+			self.optimizer.load_state_dict(ckpt['optimizer'])
+			if self.lr_scheduler:
+				self.lr_scheduler.load_state_dict(ckpt['scheduler'])
+		else:
+			self.start_epoch = 0
+			self.best_score = 0
+			if self.args.pretrained: # load pretrained weights
+				pretrained_path = config.shortname_2_model_path[self.args.pretrained].format(seed=self.args.seed)
+				print(f'Loading pretrained model: {pretrained_path}')
+				ckpt = torch.load(pretrained_path, 'cpu')
+				self.model.load_state_dict(ckpt['model'])
 
-        # loggers
-        metric_logger.update( **{'train_loss': loss_value} )
-        lr = optimizer.param_groups[0]["lr"]
-        metric_logger.update(lr=lr)
-        if log_writer:
-            # We use epoch_1000x as the x-axis in tensorboard.
-            # This calibrates different curves when batch size changes.
-            epoch_1000x = int((data_iter_step / len(data_loader) + epoch) * 1000)
-            log_writer.add_scalar('train/loss', loss_value, epoch_1000x)
-            log_writer.add_scalar('lr', lr, epoch_1000x)
 
-    print("Averaged stats:", metric_logger)
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
-    
+	def has_model_improved(self, val_stats):
+		if val_stats and val_stats['mRecall'] > self.best_score:
+			self.best_score = val_stats['mRecall']
+			return True
+		return False
+	
 
-def validate(model, dataset, device, epoch=-1, log_writer=None):
+	def save_checkpoint(self, save_best_model, epoch):
+		tosave = {'epoch': epoch,
+				'model': self.model.state_dict(),
+				'optimizer': self.optimizer.state_dict(),
+				'scheduler': self.lr_scheduler.state_dict() if self.lr_scheduler else None,
+				'args': self.args,
+				'best_score': self.best_score}
+		# overwrite the current checkpoint after each epoch
+		torch.save(tosave, self.ckpt_fname)
+		# overwrite the "best" checkpoint each time the model improves
+		if save_best_model:
+			shutil.copyfile(self.ckpt_fname, os.path.join(self.args.output_dir, 'checkpoint_best.pth'))
+		# save an independent checkpoint every required time step
+		if epoch and epoch % self.args.saving_ckpt_step == 0:
+			shutil.copyfile(self.ckpt_fname, os.path.join(self.args.output_dir, 'checkpoint_{:d}.pth'.format(epoch)))
+		
 
-    # evaluate model & get metric values
-    model.eval()
-    recalls, loss_value = compute_eval_metrics(model, dataset, device, compute_loss=True)
-    val_stats = {"val_loss": loss_value}
-    val_stats.update(recalls)
+	def init_other_training_elements(self):
+		self.init_lr_scheduler()
+		self.data_augmentation_module = DataAugmentation(self.args, mode="posescript", tokenizer_name=get_tokenizer_name(self.args.text_encoder_name))
 
-    # loggers
-    if log_writer:
-        # We use epoch_1000x as the x-axis in tensorboard.
-        # This calibrates different curves when batch size changes.
-        epoch_1000x = int((1 + epoch) * 1000)
-        log_writer.add_scalar('val/loss', loss_value, epoch_1000x)
-        for k,v in recalls.items():
-            log_writer.add_scalar(f'val/{k}', v, epoch_1000x)
 
-    print( f"[val] Epoch: [{epoch}]\nStats: " + "  ".join(f"{k}: {v}" for k,v in val_stats.items()) )
-    return val_stats
+	def training_epoch(self, epoch):
+		train_stats = self.one_epoch(epoch=epoch, is_training=True)
+		return train_stats
+	
+
+	def validation_epoch(self, epoch):
+		val_stats = self.validate(epoch=epoch)
+		return val_stats
+	
+
+	def one_epoch(self, epoch, is_training):
+
+		self.model.train(is_training)
+
+		# define loggers
+		metric_logger = logging.MetricLogger(delimiter="  ")
+		if is_training:
+			prefix, sstr = '', 'train'
+			metric_logger.add_meter(f'{sstr}_lr', logging.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+		else:
+			prefix, sstr = '[val] ', 'val'
+		header = f'{prefix}Epoch: [{epoch}]'
+		
+		# define dataloader & other elements
+		if is_training:
+			data_loader = self.data_loader_train
+		if not is_training:
+			data_loader = self.data_loader_val
+
+		# iterate over the batches
+		for data_iter_step, item in enumerate(metric_logger.log_every(data_loader, self.args.log_step, header)):
+
+			# get data
+			poses = item['pose'].to(self.device)
+			caption_tokens = item['caption_tokens'].to(self.device)
+			caption_lengths = item['caption_lengths'].to(self.device)
+			caption_tokens = caption_tokens[:,:caption_lengths.max()] # truncate within the batch, based on the longest text 
+
+			# online random augmentations
+			poses, caption_tokens, caption_lengths = self.data_augmentation_module(poses, caption_tokens, caption_lengths)
+
+			# forward; compute scores
+			with torch.set_grad_enabled(is_training):
+				poses_features, texts_features = self.model(poses, caption_tokens, caption_lengths)
+				score_t2p = texts_features.mm(poses_features.t()) * self.model.loss_weight
+
+			# compute loss
+			if self.args.retrieval_loss == "BBC":
+				loss = BBC(score_t2p)
+			elif self.args.retrieval_loss == "symBBC":
+				loss = symBBC(score_t2p)
+			else:
+				raise NotImplementedError
+
+			loss_value = loss.item()
+			if not math.isfinite(loss_value):
+				print("Loss is {}, stopping training".format(loss_value))
+				sys.exit(1)
+
+			# training step
+			if is_training:
+				self.optimizer.zero_grad()
+				loss.backward()
+				self.optimizer.step()
+
+			# format data for logging
+			scalars = [('loss', loss_value)]
+			if is_training:
+				lr_value = self.optimizer.param_groups[0]["lr"]
+				scalars += [('lr', lr_value)]
+
+			# actually log
+			self.add_data_to_log_writer(epoch, sstr, scalars=scalars, is_training=is_training, data_iter_step=data_iter_step, total_steps=len(data_loader))
+			self.add_data_to_metric_logger(metric_logger, sstr, scalars)
+
+		print("Averaged stats:", metric_logger)
+		return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+
+
+	def validate(self, epoch):
+
+		self.model.eval()
+
+		recalls, loss_value = compute_eval_metrics(self.model, self.data_loader_val.dataset, self.device, compute_loss=True)
+		val_stats = {"loss": loss_value}
+		val_stats.update(recalls)
+
+		# log
+		self.add_data_to_log_writer(epoch, 'val', scalars=[('loss', loss_value), ('validation', recalls)], should_log_data=True)
+		print(f"[val] Epoch: [{epoch}] Stats: " + "  ".join(f"{k}: {round(v, 3)}" for k,v in val_stats.items()) )
+		return val_stats	
 
 
 if __name__ == '__main__':
-    argparser = get_args_parser()
-    args = argparser.parse_args()
-    # create path to saving directory
-    if args.output_dir=='':
-        args.output_dir = get_output_dir(args)
-        print(args.output_dir)
-    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
-    main(args)
+	
+	argparser = get_args_parser()
+	args = argparser.parse_args()
+	
+	PoseTextTrainer(args)()

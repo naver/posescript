@@ -1,7 +1,8 @@
 ##############################################################
 ## text2pose                                                ##
-## Copyright (c) 2022-present                               ##
+## Copyright (c) 2022                                       ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
-## Naver Corporation                                        ##
-## CC BY-NC-SA 4.0                                          ##
+## and Naver Corporation                                    ##
+## Licensed under the CC BY-NC-SA 4.0 license.              ##
+## See project root for license details.                    ##
 ##############################################################

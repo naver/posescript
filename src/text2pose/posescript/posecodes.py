@@ -1,9 +1,10 @@
 ##############################################################
 ## PoseScript                                               ##
-## Copyright (c) 2022-present                               ##
+## Copyright (c) 2022, 2023                                 ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
-## Naver Corporation                                        ##
-## CC BY-NC-SA 4.0                                          ##
+## and Naver Corporation                                    ##
+## Licensed under the CC BY-NC-SA 4.0 license.              ##
+## See project root for license details.                    ##
 ##############################################################
 
 import torch
@@ -64,6 +65,11 @@ class Posecode:
         # thresholds values to represent human subjectivity at pose interpretation
         self.random_max_offset = None
 
+    def fill_attributes(self, posecode_operator_values):
+        self.category_names = posecode_operator_values['category_names']
+        self.category_thresholds = posecode_operator_values['category_thresholds']
+        self.random_max_offset = posecode_operator_values['random_max_offset']
+
     def eval(self, joint_ids, joint_coords):
         """Evaluate the posecode for each of the provided joint sets and each
         pose.
@@ -80,6 +86,17 @@ class Posecode:
                 posecode for each joint set and each pose.
         """
         raise NotImplementedError
+
+    def randomize(self, val):
+        # To represent a bit human subjectivity at interpretation, slightly
+		# randomize the thresholds to be applied on the measured values; or,
+		# more conveniently, simply randomize a bit the evaluations: add or
+		# subtract up to the maximum authorized random offset to the measured
+		# values.
+        # NOTE: Depending on the random offset and the category thresholds, this
+	    # should not affect the "ignored" classifications.
+        val += (torch.rand(val.shape)*2-1) * self.random_max_offset
+        return val
 
     def interprete(self, val, ct=None):
         """Interprete the posecode value.
@@ -163,14 +180,7 @@ class Posecode:
 class PosecodeAngle(Posecode):
 
     def __init__(self):
-        pov = POSECODE_OPERATORS_VALUES['angle']
-        # define interpretable categories
-        self.category_names = pov['category_names']
-        # thresholds to fall into each categories
-        self.category_thresholds = pov['category_thresholds'] # angles in degree
-        # maximum random offset that can be added or substracted from the
-        # thresholds values to represent human subjectivity at pose interpretation
-        self.random_max_offset = pov['random_max_offset'] # in degree
+        self.fill_attributes(POSECODE_OPERATORS_VALUES['angle'])
 
     def eval(self, joint_ids, joint_coords):
         """Evaluate the posecode for each of the provided joint sets and each
@@ -201,14 +211,7 @@ class PosecodeAngle(Posecode):
 class PosecodeDistance(Posecode):
 
     def __init__(self):
-        pov = POSECODE_OPERATORS_VALUES['distance']
-        # define interpretable categories
-        self.category_names = pov['category_names']
-        # thresholds to fall into each categories
-        self.category_thresholds = pov['category_thresholds'] # distance value (in meters)
-        # maximum random offset that can be added or substracted from the
-        # thresholds values to represent human subjectivity at pose interpretation
-        self.random_max_offset = pov['random_max_offset'] # (in meters)
+        self.fill_attributes(POSECODE_OPERATORS_VALUES['distance'])
 
     def eval(self, joint_ids, joint_coords):
         return distance_between_joint_pairs(joint_ids, joint_coords)
@@ -230,13 +233,7 @@ class PosecodeRelativePos(Posecode):
 
     def __init__(self, axis):
         pov = POSECODE_OPERATORS_VALUES[['relativePosX', 'relativePosY', 'relativePosZ'][axis]]
-        # define interpretable categories
-        self.category_names = pov['category_names']
-        # thresholds to fall into each categories
-        self.category_thresholds = pov['category_thresholds'] # distance value (in meters)
-        # maximum random offset that can be added or substracted from the
-        # thresholds values to represent human subjectivity at pose interpretation
-        self.random_max_offset = pov['random_max_offset'] # (in meters)
+        self.fill_attributes(pov)
         self.axis = axis
 
     def eval(self, joint_ids, joint_coords):
@@ -261,14 +258,7 @@ class PosecodeRelativePos(Posecode):
 class PosecodeRelativeVAxis(Posecode):
 
     def __init__(self):
-        pov = POSECODE_OPERATORS_VALUES['relativeVAxis']
-        # define interpretable categories
-        self.category_names = pov['category_names']
-        # thresholds to fall into each categories
-        self.category_thresholds = pov['category_thresholds'] # in degree
-        # maximum random offset that can be added or substracted from the
-        # thresholds values to represent human subjectivity at pose interpretation
-        self.random_max_offset = pov['random_max_offset'] # in degree
+        self.fill_attributes(POSECODE_OPERATORS_VALUES['relativeVAxis'])
         self.vertical_vec = torch.tensor([0.0, 1.0, 0.0])
 
     def eval(self, joint_ids, joint_coords):
@@ -300,14 +290,7 @@ class PosecodeRelativeVAxis(Posecode):
 class PosecodeOnGround(Posecode):
 
     def __init__(self):
-        pov = POSECODE_OPERATORS_VALUES['onGround']
-        # define interpretable categories
-        self.category_names = pov['category_names']
-        # thresholds to fall into each categories
-        self.category_thresholds = pov['category_thresholds'] # in meters
-        # maximum random offset that can be added or substracted from the
-        # thresholds values to represent human subjectivity at pose interpretation
-        self.random_max_offset = pov['random_max_offset'] # in meters
+        self.fill_attributes(POSECODE_OPERATORS_VALUES['onGround'])
 
     def eval(self, joint_ids, joint_coords):
         """Evaluate the posecode for each of the provided joint sets and each

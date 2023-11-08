@@ -7,15 +7,18 @@ git+https://github.com/MPI-IS/mesh.git
 git+https://github.com/nghorbani/human_body_prior.git
 
 torch==1.10.1+cu102
-torchtext
+torchtext==0.11.1
+torchvision==0.11.2
 nltk
 matplotlib
 opencv-python
-tqdm
+transformers
 trimesh[easy]
 pyrender
 roma
-streamlit
+streamlit==1.23.1
 tabulate
-tensorboard
+tensorboard==2.11.2
 setuptools==59.5.0
+bert_score
+tqdm

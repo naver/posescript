@@ -1,20 +1,23 @@
 ##############################################################
 ## text2pose                                                ##
-## Copyright (c) 2022-present                               ##
+## Copyright (c) 2022, 2023                                 ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
-## Naver Corporation                                        ##
-## CC BY-NC-SA 4.0                                          ##
+## and Naver Corporation                                    ##
+## Licensed under the CC BY-NC-SA 4.0 license.              ##
+## See project root for license details.                    ##
 ##############################################################
 
 import torch
 from torch import nn
 
-from text2pose.data import Tokenizer
-from text2pose.encoders import PoseEncoder, TextEncoder
+from text2pose.encoders.tokenizers import Tokenizer, get_text_encoder_or_decoder_module_name, get_tokenizer_name
+from text2pose.encoders.pose_encoder_decoder import PoseEncoder
+from text2pose.encoders.text_encoders import TextEncoder, TransformerTextEncoder
 
 
 class PoseText(nn.Module):
-    def __init__(self, num_neurons=512, num_neurons_mini=32, latentD=512, text_encoder_name='glovebigru'):
+    def __init__(self, num_neurons=512, num_neurons_mini=32, latentD=512,
+                 text_encoder_name='distilbertUncased', transformer_topping=None):
         super(PoseText, self).__init__()
 
         self.latentD = latentD
@@ -24,8 +27,11 @@ class PoseText(nn.Module):
 
         # Define text encoder
         self.text_encoder_name = text_encoder_name
-        if self.text_encoder_name.split("_")[0] in ["glovebigru"]:
+        module_ref = get_text_encoder_or_decoder_module_name(text_encoder_name)
+        if module_ref in ["glovebigru"]:
             self.text_encoder = TextEncoder(self.text_encoder_name, latentD=latentD, role="retrieval")
+        elif module_ref in ["glovetransf", "distilbertUncased"]:
+            self.text_encoder = TransformerTextEncoder(self.text_encoder_name, latentD=latentD, topping=transformer_topping, role="retrieval")
         else:
             raise NotImplementedError
 
@@ -40,7 +46,14 @@ class PoseText(nn.Module):
 
     def encode_raw_text(self, raw_text):
         if not hasattr(self, 'tokenizer'):
-            self.tokenizer = Tokenizer(self.text_encoder_name)
+            self.tokenizer = Tokenizer(get_tokenizer_name(self.text_encoder_name))
         tokens = self.tokenizer(raw_text).to(device=self.loss_weight.device)
         length = torch.tensor([ len(tokens) ], dtype=tokens.dtype)
-        return self.text_encoder(tokens.view(1, -1), length)
+        text_embs = self.text_encoder(tokens.view(1, -1), length)
+        return text_embs
+        
+    def encode_pose(self, pose):
+        return self.pose_encoder(pose)
+
+    def encode_text(self, captions, caption_lengths):
+        return self.text_encoder(captions, caption_lengths)
