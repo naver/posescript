@@ -15,16 +15,20 @@ This code is divided in several parts, presented below. Click on the links to ac
 <tbody>
 <tr>
   <th>Dataset</th>
-  <th align="center">Related Tasks</th>
+  <th align="center">
+  
+  Related Tasks [`subdirectory`]
+  
+  </th>
 </tr>
 <tr>
   <td align="center">PoseScript</td>
   <td>
 
-* [automatic captioning pipeline](./src/text2pose/posescript/README.md) *(producing descriptions)*
-* [text-to-pose retrieval model](./src/text2pose/retrieval/README.md)
-* [text-conditioned pose generation model](./src/text2pose/generative/README.md)
-* [pose description generation model](./src/text2pose/generative_caption/README.md)
+* [automatic captioning pipeline](./src/text2pose/posescript/README.md) *(producing descriptions)* [`posescript`]
+* [text-to-pose retrieval model](./src/text2pose/retrieval/README.md) [`retrieval`]
+* [text-conditioned pose generation model](./src/text2pose/generative/README.md) [`generative`]
+* [pose description generation model](./src/text2pose/generative_caption/README.md) [`generative_caption`]
 
   </td>
 </tr>
@@ -32,10 +36,10 @@ This code is divided in several parts, presented below. Click on the links to ac
   <td align="center">PoseFix</td>
   <td>
 
-* [automatic comparative pipeline](./src/text2pose/posefix/README.md) *(producing modifiers)*
-* [pose-pair-to-instruction retrieval model](./src/text2pose/retrieval_modifier/README.md)
-* [text-guided pose editing model](./src/text2pose/generative_B/README.md)
-* [pose-based correctional text generation model](./src/text2pose/generative_modifier/README.md)
+* [automatic comparative pipeline](./src/text2pose/posefix/README.md) *(producing modifiers)*  [`posefix`]
+* [pose-pair-to-instruction retrieval model](./src/text2pose/retrieval_modifier/README.md)  [`retrieval_modifier`]
+* [text-guided pose editing model](./src/text2pose/generative_B/README.md)  [`generative_B`]
+* [pose-based correctional text generation model](./src/text2pose/generative_modifier/README.md)  [`generative_modifier`]
       
   </td>
 </tr>
@@ -206,15 +210,25 @@ with `<dataset>` being either `posescript` or `posefix`.
   ```
   <model shortname><4 spaces><path to the model>
   ```
-  You can copy lines from [here](./pretrained_models.md#references-in-shortname_2_model_path).
+  You can copy lines from [here](./pretrained_models.md#references-in-shortname_2_model_pathtxt).
 
 - **Launch a demo**:
   ```bash
   streamlit run <type>/demo_<type>.py -- --model_path </path/to/model.pth>
   ```
-  with:
-    - `<type>` being one of `retrieval`|`retrieval_modifier`|`generative`|`generative_B`|`generate_caption`|`generate_modifier`;
-    - `</path/to/model.pth>` being any model full path of the required type; if you followed to procedure, you can find them in *./src/text2pose/shortname_2_model_path.txt*
+  where:
+    * `<type>` depends on the task, and is given in the table below;
+    * `</path/to/model.pth>` is the path to the model, which, if using one of the pretrained model, can be: `<GENERAL_EXP_OUTPUT_DIR>/<model_name>/seed1/checkpoint_best.pth` with `<model_name>` indicated in the table below.
+
+    | `<type>` | Task (with related dataset) | Example `<model_name>` |
+    | ---- | ---- | ---- |
+    | `retrieval` | [text-to-pose retrieval model](./src/text2pose/retrieval/README.md) (PoseScript) | *ret_distilbert_dataPSA2ftPSH2* |
+    | `generative` | [text-conditioned pose generation model](./src/text2pose/generative/README.md) (PoseScript) | *gen_distilbert_dataPSA2ftPSH2* |
+    | `generative_caption` | [pose description generation model](./src/text2pose/generative_caption/README.md) (PoseScript) | *capgen_CAtransfPSA2H2_dataPSA2ftPSH2* |
+    | `retrieval_modifier` | [pose-pair-to-instruction retrieval model](./src/text2pose/retrieval_modifier/README.md) (PoseFix) | *modret_distilbert_dataPFAftPFH* |
+    | `generative_B` | [text-guided pose editing model](./src/text2pose/generative_B/README.md) (PoseFix) | *b_gen_distilbert_dataPFAftPFH* |
+    | `generative_modifier` | [pose-based correctional text generation model](./src/text2pose/generative_modifier/README.md) (PoseFix) | *modgen_CAtransfPFAHPP_dataPFAftPFH* |
+
 
 ## Train & Evaluate models
 
