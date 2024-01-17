@@ -46,7 +46,6 @@ eval_parser.add_argument('--split', default="test", type=str, help='Split to eva
 ################################################################################
 
 NLP_metric_coeff = 100
-FID_coeff = 1000
 DIST_coeff = 1000 # get results in milimeters
 
 def scale_and_format_results(ret):
@@ -59,7 +58,7 @@ def scale_and_format_results(ret):
 	for k in ret:
 		# convert each sub-element to string
 		if k=='fid':
-			ret[k] = ['%.2f' % (x*FID_coeff) for x in ret[k]]
+			ret[k] = ['%.2f' % x for x in ret[k]]
 		elif re.match(r'.*(jts|v2v)_dist.*', k):
 			ret[k] = ['%.0f' % (x*DIST_coeff) for x in ret[k]]
 		elif k in ['bleu', 'rougeL', 'meteor']:
