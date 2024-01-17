@@ -23,7 +23,6 @@ from text2pose.generative.fid import FID
 
 
 OVERWRITE_RESULT = False
-FID_coeff = 1000
 
 
 def eval_model_all_runs(model_path, dataset_version, fid_version, split='val'):
@@ -197,7 +196,6 @@ if __name__=="__main__":
 		nb = 1
 
 	# display results
-	ret["fid"] = [x*FID_coeff for x in ret["fid"]]
 	if nb == 1:
 		fill = lambda key: '%.2f' % ret[key][0]
 	else:
