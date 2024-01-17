@@ -24,7 +24,7 @@ class FID(nn.Module):
         ckpt = torch.load(ckpt_path, 'cpu')
         print("FID: load", ckpt_path)
         self.model = PoseEncoder(latentD=ckpt['args'].latentD, role="retrieval")
-        self.model.load_state_dict({k[len('pose_encoder.encoder.'):]: v for k,v in ckpt['model'].items() if k.startswith('pose_encoder.encoder.')}, strict=False)
+        self.model.load_state_dict({k[len('pose_encoder.'):]: v for k,v in ckpt['model'].items() if k.startswith('pose_encoder.encoder.')})
         self.model.eval()
         self.model.to(self.device)
 

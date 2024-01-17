@@ -24,7 +24,7 @@ from text2pose.fid import FID
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
 OVERWRITE_RESULT = False
-
+SPECIAL_END_SUFFIX = ""
 
 ################################################################################
 
@@ -64,7 +64,7 @@ def eval_model(model_path, dataset_version, fid_version, split='val'):
 	# define result file & get auxiliary info
 	fid_version, precision = get_evaluation_auxiliary_info(fid_version)
 	nb_caps = config.caption_files[dataset_version][0]
-	get_res_file = evaluate.get_result_filepath_func(model_path, split, dataset_version, precision, nb_caps)
+	get_res_file = evaluate.get_result_filepath_func(model_path, split, dataset_version, precision, nb_caps, special_end_suffix=SPECIAL_END_SUFFIX)
 		
 	# load model if results for at least one caption is missing
 	if OVERWRITE_RESULT or evaluate.one_result_file_is_missing(get_res_file, nb_caps):
@@ -183,7 +183,7 @@ def eval_model_multiset(model_path, dataset_version, fid_version, split='val'):
 
 	# define result file & get auxiliary info
 	fid_version, precision = get_evaluation_auxiliary_info(fid_version)
-	filename_res = evaluate.get_result_filepath_func(model_path, split, dataset_version, precision, nb_caps=1, special_end_suffix="_special")(0)	
+	filename_res = evaluate.get_result_filepath_func(model_path, split, dataset_version, precision, nb_caps=1, special_end_suffix="_special"+SPECIAL_END_SUFFIX)(0)	
 	
 	# exit if results were already computed
 	if not OVERWRITE_RESULT and os.path.isfile(filename_res):
@@ -192,6 +192,9 @@ def eval_model_multiset(model_path, dataset_version, fid_version, split='val'):
 	# load model
 	model, tokenizer_name = load_model(model_path, device)
 	# override the forward method with one that deals with the different settings
+	print("Overriding some model functions to perform special evaluation:\n"+\
+	   	"\t- forward -->  special_eval_forward\n"+\
+		"\t- sample_nposes --> special_eval_sample_nposes")
 	model.forward = model.special_eval_forward
 	model.sample_nposes = model.special_eval_sample_nposes
 
@@ -273,8 +276,8 @@ def display_results(results, special_eval=False):
 
 	if special_eval:
 		for k, r in results.items():
-			results[k] = evaluate.scale_and_format_results(r)
-			print(f"\n<{k.replace('_', ' ')} ({int(r['n_data'])})> & {' & '.join([results[k][m] for m in metric_order])} \\\\\n")	
+			results[k] = evaluate.scale_and_format_results(r.copy())
+			print(f"\n<{k.replace('_', ' ')} ({int(r['n_data'][0])})> & {' & '.join([results[k][m] for m in metric_order])} \\\\\n")	
 	else:
 		results = evaluate.scale_and_format_results(results)
 		print(f"\n<model> & {' & '.join([results[m] for m in metric_order])} \\\\\n")

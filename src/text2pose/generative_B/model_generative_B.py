@@ -158,7 +158,7 @@ class PoseBGenerator(nn.Module):
 		ret.update({'q_f': q_f, 'q_z': q_z})
 		return ret
 
-	def special_eval_sample_nposes(self, poses_A, captions, caption_lengths, n=1):
+	def special_eval_sample_nposes(self, poses_A, captions, caption_lengths, n=1, **kwargs):
 		### begin as usual
 		embed_poses_A = self.encode_pose(poses_A)
 		embed_texts = self.encode_text(captions, caption_lengths)

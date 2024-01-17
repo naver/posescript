@@ -282,6 +282,6 @@ class CLIPTextEncoder(nn.Module):
 
     def forward(self, captions, caption_lengths):
         attention_mask = self.get_attention_mask(captions, caption_lengths)
-        token_embeddings = self.pretrained_text_encoder(input_ids=captions, attention_mask=attention_mask).text_embeds
-        token_embeddings = self.projection(token_embeddings) # (batch_size, nbtokens, latentID)
+        token_embeddings = self.pretrained_text_encoder(input_ids=captions, attention_mask=attention_mask).text_embeds # (batch_size, clip_output_dim)
+        token_embeddings = self.projection(token_embeddings) # (batch_size, latentD)
         return self.output_layer(token_embeddings)

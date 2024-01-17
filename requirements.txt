@@ -22,3 +22,4 @@ tensorboard==2.11.2
 setuptools==59.5.0
 bert_score
 tqdm
+evaluate
