@@ -36,6 +36,8 @@ Then use the following command:
 bash generative/script_generative.sh 'train' <training phase: pretrain|finetune> <seed number>
 ```
 
+**Note for the finetuning step**: In the script, `pretrained` defines the nickname of the pretrained model. The mapping between nicknames and actual model paths is given by *shortname_2_model_path.txt*. This means that if you train a model and intend to use its weights to train another, you should first write its path in *shortname_2_model_path.txt*, give it a nickname, and write this nickname in front of the `pretrained` argument in the script. The nickname will appear in the path of the finetuned model.
+
 ## :dart: Evaluate
 
 Use the following command:
