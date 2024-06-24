@@ -1,4 +1,4 @@
-# Available pretrained models
+# Available trained models
 
 ## Download links
 
@@ -12,6 +12,8 @@
 | `generative_modifier` | [pose-based correctional text generation model](./src/text2pose/generative_modifier/README.md) | `modgen_CAtransfPFAHPP_dataPFAftPFH` | [download](https://download.europe.naverlabs.com/ComputerVision/PoseFix/modgen_CAtransfPFAHPP_dataPFAftPFH.zip) |  **R@1 Precision** = 78.85 <br> **MPJE_30** = 186 <br> **ROUGE-L** = 33.53 | 
 
 Unzip the archives and place the content of the resulting directories in ***GENERAL_EXP_OUTPUT_DIR***.
+
+**Note:** these models are the result of a two-stage training, involving a pretraining stage on automatic texts, and a finetuning stage on human-written annotations.
 
 <details>
 <summary>Bash script to download & unzip everything all at once.</summary>
