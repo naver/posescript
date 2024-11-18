@@ -12,6 +12,7 @@ import torch.nn as nn
 
 from human_body_prior.models.vposer_model import NormalDistDecoder
 
+import text2pose.config as config
 from text2pose.encoders.tokenizers import Tokenizer, get_text_encoder_or_decoder_module_name, get_tokenizer_name
 from text2pose.encoders.modules import ConCatModule, TIRG
 from text2pose.data import T_POSE
@@ -21,7 +22,7 @@ from text2pose.encoders.text_encoders import TextEncoder, TransformerTextEncoder
 
 class PoseBGenerator(nn.Module):
 
-	def __init__(self, num_neurons=512, latentD=32, special_text_latentD=None,
+	def __init__(self, num_neurons=512, latentD=32, num_body_joints=config.NB_INPUT_JOINTS, special_text_latentD=None,
 					text_encoder_name='distilbertUncased', transformer_topping=None,
 					correction_module_mode="tirg"):
 		super(PoseBGenerator, self).__init__()
@@ -30,8 +31,8 @@ class PoseBGenerator(nn.Module):
 		special_text_latentD = special_text_latentD if special_text_latentD else latentD
 
 		# Define pose auto-encoder
-		self.pose_encoder = PoseEncoder(num_neurons, latentD=latentD, role="modifier")
-		self.pose_decoder = PoseDecoder(num_neurons, latentD)
+		self.pose_encoder = PoseEncoder(num_neurons=num_neurons, latentD=latentD, num_body_joints=num_body_joints, role="modifier")
+		self.pose_decoder = PoseDecoder(num_neurons=num_neurons, latentD=latentD, num_body_joints=num_body_joints)
 		self.pose_decoder_distribution_layer = NormalDistDecoder(latentD, latentD)
 
 		# Define text encoder

@@ -1,6 +1,6 @@
 ##############################################################
 ## PoseScript                                               ##
-## Copyright (c) 2022, 2023                                 ##
+## Copyright (c) 2022, 2023, 2024                           ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
 ## and Naver Corporation                                    ##
 ## Licensed under the CC BY-NC-SA 4.0 license.              ##
@@ -35,6 +35,11 @@
 # follow the ADDED_FOR_MODIFIER marks.
 
 
+# Helper function
+def flatten_list(l):
+    return [item for sublist in l for item in sublist]
+
+
 ################################################################################
 #                                                                              #
 #                   POSECODE EXTRACTION                                        #
@@ -46,9 +51,9 @@
 ######################
 
 # The following describes the different posecode operators (ie. kinds of relations):
-# - category_names: names used for computation; they all must be unique among posecodes (ie. within POSECODE_OPERATORS_VALUES)
+# - category_names: names used for computation; they all must be unique among elementary posecodes (ie. within POSECODE_OPERATORS_VALUES)
 # - category_names_ticks: names used for display
-# - category_thresholds: values (in degrees or meters) to distinguish between 2 categories
+# - category_thresholds: values (in degrees or meters) to distinguish between 2 categories; in increasing order of value
 # - random_max_offset: value (in degrees or meters) used to randomize the binning step (noise level)
 
 POSECODE_OPERATORS_VALUES = {
@@ -93,7 +98,43 @@ POSECODE_OPERATORS_VALUES = {
         'category_names_ticks': ['on ground', 'ground-ignored'],
         'category_thresholds': [0.10],
         'random_max_offset': 0.05
-    }
+    },
+    "bodyInclineX": { # values in degrees
+        'category_names': ['body incline backward', 'body incline backward slightly', 'body_ignored_x_incline', 'body incline forward slightly', 'body incline forward'],
+        'category_names_ticks': ['', '', '', '', ''],
+        'category_thresholds': [-50, -20, 20, 50],
+        'random_max_offset': 5
+    },
+    "bodyInclineY": { # values in degrees
+        'category_names': ['body twist left', 'body twist left slightly', 'body_ignored_y_twist', 'body twist right slightly', 'body twist right'],
+        'category_names_ticks':  ['', '', '', '', ''],
+        'category_thresholds': [-50, -20, 20, 50],
+        'random_max_offset': 5
+    },
+    "bodyInclineZ": { # values in degrees
+        'category_names': ['body lean right', 'body lean right slightly', 'body_ignored_z_lean', 'body lean left slightly', 'body lean left'],
+        'category_names_ticks': ['', '', '', '', ''],
+        'category_thresholds': [-30, -15, 15, 30],
+        'random_max_offset': 5
+    },
+    "relativeRotX": { # values in degrees
+        'category_names': ['incline backward', 'ignored_x_incline', 'incline forward'],
+        'category_names_ticks': ['', '', ''],
+        'category_thresholds': [-45, 30],
+        'random_max_offset': 5
+    },
+    "relativeRotY": { # values in degrees
+        'category_names': ['turn right', 'turn right slightly', 'ignored_y_turn', 'turn left slightly', 'turn left'],
+        'category_names_ticks': ['', '', '', '', ''],
+        'category_thresholds': [-30, -15, 15, 30],
+        'random_max_offset': 5
+    },
+    "relativeRotZ": { # values in degrees
+        'category_names': ['incline left', 'ignored_z_incline', 'incline right'],
+        'category_names_ticks': ['', '', ''],
+        'category_thresholds': [-30, 30],
+        'random_max_offset': 5
+    },
     # ADD_POSECODE_KIND
 }
 
@@ -111,8 +152,9 @@ POSECODE_OPERATORS_VALUES = {
 #       joints from the joint set (ie. any joint can be the description topic).
 # - list of acceptable interpretations for description regarding the posecode
 #       operator. If string 'ALL' is provided, all interpretations from the
-#       operator are to be considered (note that if no interpretation is to be
-#       considered, then the posecode should not be defined in the first place).
+#       operator are to be considered, except the ones with 'ignored' in their
+#       name (note that if no interpretation is to be considered, then the
+#       posecode should not be defined in the first place).
 # - list of rare interpretations, that should make it to the description
 #       regardless of the random skip option. If an empty list is provided, it
 #       means that there are no rare interpretations for the corresponding kind
@@ -292,7 +334,7 @@ def add_intptt_to_list_distance_posecode(intptt, initial, type='acceptable', add
 
 # Since the joint sets are shared accross X-, Y- and Z- relative positioning
 # posecodes, all these posecodes are gathered below (with the interpretation
-# sublists (acceptable, rare, support) being divided into 3 specific
+# sublists (acceptable, rare, support, absolute) being divided into 3 specific
 # sub-sublists for the X-, Y-, Z-axis respectively)
 
 RELATIVEPOS_POSECODES = [
@@ -321,18 +363,19 @@ RELATIVEPOS_POSECODES = [
     #*****************************************
     ### SEMANTIC: LEANING BODY? KNEELING BODY ?
     # leaning to side, forward/backward
-    [('neck', 'pelvis'), 'body',
-        [['at_right', 'at_left'], None, ['behind', 'front']],
-        [[],[],[]],
-        [[('at_right', 1), ('at_left', 1)],[],[('behind', 1), ('front', 1)]], [[],[],[]]], # support for 'bent forward/backward and to the sides'
-    [('left_ankle', 'neck'), 'left_ankle',
-        [None, ['below'], None],
-        [[],[],[]],
-        [[],[('below', 1)],[]], [[],[],[]]], # support for 'bent forward/backward'
-    [('right_ankle', 'neck'), 'right_ankle',
-        [None, ['below'], None],
-        [[],[],[]],
-        [[],[('below', 1)],[]], [[],[],[]]], # support for 'bent forward/backward'
+    # NOTE: COMMENTING NEXT CODES BECAUSE NOW USING THE DEDICATED BODY INCLINATION POSECODE
+    # [('neck', 'pelvis'), 'body',
+    #     [['at_right', 'at_left'], None, ['behind', 'front']],
+    #     [[],[],[]],
+    #     [[('at_right', 1), ('at_left', 1)],[],[('behind', 1), ('front', 1)]], [[],[],[]]], # support for 'bent forward/backward and to the sides'
+    # [('left_ankle', 'neck'), 'left_ankle',
+    #     [None, ['below'], None],
+    #     [[],[],[]],
+    #     [[],[('below', 1)],[]], [[],[],[]]], # support for 'bent forward/backward' and to the sides
+    # [('right_ankle', 'neck'), 'right_ankle',
+    #     [None, ['below'], None],
+    #     [[],[],[]],
+    #     [[],[('below', 1)],[]], [[],[],[]]], # support for 'bent forward/backward' and to the sides
     [('left_hip', 'left_knee'), 'left_hip',
         [None, ['above'], None],
         [[],[],[]],
@@ -464,8 +507,8 @@ RELATIVEVAXIS_POSECODES = [
     ### SEMANTIC: BODY PART HORIZONTAL/VERTICAL?
     [('left_hip', 'left_knee'), 'left_thigh', ['horizontal', 'vertical'], ['horizontal'], [], ['horizontal']], # L thigh alignment
     [('right_hip', 'right_knee'), 'right_thigh', ['horizontal', 'vertical'], ['horizontal'], [], ['horizontal']], # R ...
-    [('left_knee', 'left_ankle'), 'left_calf', ['horizontal', 'vertical'], ['horizontal'], [], ['horizontal']], # L calf alignment
-    [('right_knee', 'right_ankle'), 'right_calf', ['horizontal', 'vertical'], ['horizontal'], [], ['horizontal']], # R ...
+    [('left_knee', 'left_ankle'), 'left_shin', ['horizontal', 'vertical'], ['horizontal'], [], ['horizontal']], # L shin alignment
+    [('right_knee', 'right_ankle'), 'right_shin', ['horizontal', 'vertical'], ['horizontal'], [], ['horizontal']], # R ...
     [('left_shoulder', 'left_elbow'), 'left_upperarm', ['horizontal', 'vertical'], ['vertical'], [], ['horizontal', 'vertical']], # L upper arm alignment
     [('right_shoulder', 'right_elbow'), 'right_upperarm', ['horizontal', 'vertical'], ['vertical'], [], ['horizontal', 'vertical']], # R ...
     [('left_elbow', 'left_wrist'), 'left_forearm', ['horizontal', 'vertical'], ['vertical'], [], ['horizontal', 'vertical']], # L forearm alignment 
@@ -492,6 +535,42 @@ ONGROUND_POSECODES = [
     [('left_hand'), 'left_hand', ['on_ground'], [], [], ['on_ground']],
 ]
 
+
+#********************#
+#  BODY INCLINATION  #
+#********************#
+
+BODYINCLINE_POSECODES = [
+    [('left_shoulder', 'right_shoulder', 'pelvis', 'left_ankle', 'right_ankle'),
+     'body', [['ALL'], ['ALL'], ['ALL']],
+     [[],[],[]], [[],[],[]], [[],[],[]]],
+]
+
+
+#*********************#
+#  RELATIVE ROTATION  #
+#*********************#
+
+RELATIVEROT_POSECODES = [
+    [('head', 'pelvis'), 'head', [None, ['ALL'], None], # head turned left/right
+     [[],[],[]], [[],[],[]], [[],[],[]]],
+    [('head', 'neck'), 'head', [['ALL'], None, None], # chin tucked in/out
+     [[],[],[]], [[],[],[]], [[],[],[]]],
+    [('head', 'neck'), 'head', [None, None, ['ALL']], # head tilted left/right
+     [[],[],[]], [[],[],[]], [[],[],[]]],
+]
+
+# NOTE: particular case: we want to use specific sentences for the posecodes
+# dealing with the rotation of the head:
+# -- gather all relativerot posecode interpretations
+rri = flatten_list([POSECODE_OPERATORS_VALUES[f'relativeRot{axis}']['category_names'] for axis in ['X','Y','Z']])
+rri = [rrri for rrri in rri if 'ignored' not in rrri]
+SPECIFIC_INTPTT_HEAD_ROTATION = {k:f'head {k}' for k in rri}
+
+
+#***************************#
+# ... ADD_POSECODE_KIND ... #
+#***************************#
 
 # ADD_POSECODE_KIND (use a new '#***#' box, and define related posecodes below it)
 
@@ -538,10 +617,10 @@ ONGROUND_POSECODES = [
 
 SUPER_POSECODES = [
     ['torso_horizontal', [('torso'), 'horizontal'], True, True],
-    ['body_bent_left', [('body'), 'bent_left'], False, False],
-    ['body_bent_right', [('body'), 'bent_right'], False, False],
-    ['body_bent_backward', [('body'), 'bent_backward'], True, False],
-    ['body_bent_forward', [('body'), 'bent_forward'], False, False],
+    # ['body_bent_left', [('body'), 'bent_left'], False, False],
+    # ['body_bent_right', [('body'), 'bent_right'], False, False],
+    # ['body_bent_backward', [('body'), 'bent_backward'], True, False],
+    # ['body_bent_forward', [('body'), 'bent_forward'], False, False],
     ['kneel_on_left', [('body'), 'kneel_on_left'], True, False],
     ['kneel_on_right', [('body'), 'kneel_on_right'], True, False],
     ['kneeling', [('body'), 'kneeling'], True, False],
@@ -555,34 +634,35 @@ SUPER_POSECODES_REQUIREMENTS = {
     'torso_horizontal': [
         [['relativeVAxis', ('pelvis', 'left_shoulder'), 'horizontal'],
          ['relativeVAxis', ('pelvis', 'right_shoulder'), 'horizontal']]],
-    'body_bent_left': [
-        # (way 1) using the left ankle
-        [['relativePosY', ('left_ankle', 'neck'), 'below'],
-         ['relativePosX', ('neck', 'pelvis'), 'at_left']],
-        # (way 2) using the right ankle
-        [['relativePosY', ('right_ankle', 'neck'), 'below'],
-         ['relativePosX', ('neck', 'pelvis'), 'at_left']]],
-    'body_bent_right': [
-        # (way 1) using the left ankle
-        [['relativePosY', ('left_ankle', 'neck'), 'below'],
-         ['relativePosX', ('neck', 'pelvis'), 'at_right']],
-        # (way 2) using the right ankle
-        [['relativePosY', ('right_ankle', 'neck'), 'below'],
-         ['relativePosX', ('neck', 'pelvis'), 'at_right']]],
-    'body_bent_backward': [
-        # (way 1) using the left ankle
-        [['relativePosY', ('left_ankle', 'neck'), 'below'],
-         ['relativePosZ', ('neck', 'pelvis'), 'behind']],
-        # (way 2) using the right ankle
-        [['relativePosY', ('right_ankle', 'neck'), 'below'],
-         ['relativePosZ', ('neck', 'pelvis'), 'behind']]],
-    'body_bent_forward': [
-        # (way 1) using the left ankle
-        [['relativePosY', ('left_ankle', 'neck'), 'below'],
-         ['relativePosZ', ('neck', 'pelvis'), 'front']],
-        # (way 2) using the right ankle
-        [['relativePosY', ('right_ankle', 'neck'), 'below'],
-         ['relativePosZ', ('neck', 'pelvis'), 'front']]],
+    # NOTE: COMMENTING NEXT CODES BECAUSE NOW USING THE DEDICATED BODY INCLINATION POSECODE
+    # 'body_bent_left': [
+    #     # (way 1) using the left ankle
+    #     [['relativePosY', ('left_ankle', 'neck'), 'below'],
+    #      ['relativePosX', ('neck', 'pelvis'), 'at_left']],
+    #     # (way 2) using the right ankle
+    #     [['relativePosY', ('right_ankle', 'neck'), 'below'],
+    #      ['relativePosX', ('neck', 'pelvis'), 'at_left']]],
+    # 'body_bent_right': [
+    #     # (way 1) using the left ankle
+    #     [['relativePosY', ('left_ankle', 'neck'), 'below'],
+    #      ['relativePosX', ('neck', 'pelvis'), 'at_right']],
+    #     # (way 2) using the right ankle
+    #     [['relativePosY', ('right_ankle', 'neck'), 'below'],
+    #      ['relativePosX', ('neck', 'pelvis'), 'at_right']]],
+    # 'body_bent_backward': [
+    #     # (way 1) using the left ankle
+    #     [['relativePosY', ('left_ankle', 'neck'), 'below'],
+    #      ['relativePosZ', ('neck', 'pelvis'), 'behind']],
+    #     # (way 2) using the right ankle
+    #     [['relativePosY', ('right_ankle', 'neck'), 'below'],
+    #      ['relativePosZ', ('neck', 'pelvis'), 'behind']]],
+    # 'body_bent_forward': [
+    #     # (way 1) using the left ankle
+    #     [['relativePosY', ('left_ankle', 'neck'), 'below'],
+    #      ['relativePosZ', ('neck', 'pelvis'), 'front']],
+    #     # (way 2) using the right ankle
+    #     [['relativePosY', ('right_ankle', 'neck'), 'below'],
+    #      ['relativePosZ', ('neck', 'pelvis'), 'front']]],
     'kneel_on_left': [
         [['relativePosY', ('left_knee', 'right_knee'), 'below'],
          ['onGround', ('left_knee'), 'on_ground'],
@@ -657,13 +737,22 @@ ALL_ELEMENTARY_POSECODES = {
     "relativePosZ": [[p[0], p[1], p[2][2], p[3][2], p[4][2], p[5][2]] for p in RELATIVEPOS_POSECODES if p[2][2]],
     "relativeVAxis": RELATIVEVAXIS_POSECODES,
     "onGround": ONGROUND_POSECODES,
+    "bodyInclineX": [[p[0], p[1], p[2][0], p[3][0], p[4][0], p[5][0]] for p in BODYINCLINE_POSECODES if p[2][0]],
+    "bodyInclineY": [[p[0], p[1], p[2][1], p[3][1], p[4][1], p[5][1]] for p in BODYINCLINE_POSECODES if p[2][1]],
+    "bodyInclineZ": [[p[0], p[1], p[2][2], p[3][2], p[4][2], p[5][2]] for p in BODYINCLINE_POSECODES if p[2][2]],
+    "relativeRotX": [[p[0], p[1], p[2][0], p[3][0], p[4][0], p[5][0]] for p in RELATIVEROT_POSECODES if p[2][0]],
+    "relativeRotY": [[p[0], p[1], p[2][1], p[3][1], p[4][1], p[5][1]] for p in RELATIVEROT_POSECODES if p[2][1]],
+    "relativeRotZ": [[p[0], p[1], p[2][2], p[3][2], p[4][2], p[5][2]] for p in RELATIVEROT_POSECODES if p[2][2]],
     # ADD_POSECODE_KIND
 }
 
 # kinds of paircodes for which the joints in the joint sets will *systematically*
 # not be used as main subject for description (the pipeline will resort to the
 # focus_body_part instead)
-POSECODE_KIND_FOCUS_JOINT_BASED = ['angle', 'relativeVAxis', 'onGround'] # ADD_POSECODE_KIND
+POSECODE_KIND_FOCUS_JOINT_BASED = ['angle', 'relativeVAxis', 'onGround'] + \
+                                [f'bodyIncline{x}' for x in ['X', 'Y', 'Z']] + \
+                                [f'relativeRot{x}' for x in ['X', 'Y', 'Z']]
+                                # ADD_POSECODE_KIND
 
 
 ################################################################################
@@ -758,7 +847,7 @@ STAT_BASED_RIPPLE_EFFECT_RULES = [
         ['[relativePosY] L hand - neck (above)', '[relativePosY] R hand-hip (below)', '[relativePosY] L/R hand (above)'],
         ['[relativePosZ] L/R hand (front)', '[relativePosZ] L hand - torso (behind)', '[relativePosZ] R hand - torso (behind)'],
         ['[relativeVAxis] L upperarm (vertical)', '[relativeVAxis] L forearm (horizontal)', '[angle] L elbow (right angle)'],
-        ['[relativeVAxis] L thigh (vertical)', '[relativeVAxis] L calf (vertical)', '[angle] L knee (straight)'],
+        ['[relativeVAxis] L thigh (vertical)', '[relativeVAxis] L shin (vertical)', '[angle] L knee (straight)'],
         ['[relativePosZ] L/R knee (behind)', '[relativeVAxis] L thigh (horizontal)', '[relativePosZ] L foot - torso (behind)'],
         ['[relativePosZ] L/R knee (front)', '[relativeVAxis] L thigh (vertical)', '[relativePosZ] R foot - torso (behind)']
     ]
@@ -782,10 +871,6 @@ PROP_AGGREGATION_HAPPENS = 0.95
 #                                                                              #
 ################################################################################
 
-# Helper function
-def flatten_list(l):
-    return [item for sublist in l for item in sublist]
-
 # Define different ways to refer to the figure to start the description
 # NOTE: use "neutral" words (unlike "he/her", which will automatically be used
 # as substitutes for the word "they" at processing time, depending on the chosen
@@ -796,6 +881,7 @@ BODY_REFERENCE_MID_SENTENCE = ['the body', 'the figure']
 # Define possible determiners (and their associated probability)
 DETERMINERS = ["the", "their", "his", "her"]
 DETERMINERS_PROP = [0.5, 0.3, 0.1, 0.1]
+DETERMINER_2_SUBJECT = {"the":"the person", "their":"they", "his":"he", "her":"she"}
 
 # Define possible transitions between sentences/pieces of description (and their
 # associated probability)
@@ -810,6 +896,7 @@ TEXT_TRANSITIONS_PROP = [0.2, 0.2, 0.2, 0.2, 0.2]
 # studied with regard to joint 1" (when joints are taken in reverse order, the
 # posecode interpretation needs to be adapted).
 # Only needed for posecodes for which the second body part (if any) matters.
+# Only for interpretation defining a relation of order.
 OPPOSITE_CORRESP = {
     'at_right':'at_left',
     'at_left':'at_right',
@@ -817,14 +904,19 @@ OPPOSITE_CORRESP = {
     'above':'below',
     'behind':'front',
     'front':'behind',
-    'close':'close',
-    'shoulder width':'shoulder width',
-    'spread':'spread',
-    'wide':'wide',
-    'on_ground':'on_ground',
-    'x-aligned':'x-aligned',
-    'y-aligned':'y-aligned',
-    'z-aligned':'z-aligned',
+    #
+    # --- NOTE: not including the following interpretations, as they do not
+    # define a relation of order between elements!
+    #
+    # 'close':'close',
+    # 'shoulder width':'shoulder width',
+    # 'spread':'spread',
+    # 'wide':'wide',
+    # 'on_ground':'on_ground',
+    # 'x-aligned':'x-aligned',
+    # 'y-aligned':'y-aligned',
+    # 'z-aligned':'z-aligned',
+    # 'touch':'touch',
     }
     # ADD_POSECODE_KIND: add interpretations if there are some new 
     # ADD_SUPER_POSECODE
@@ -856,7 +948,7 @@ OPPOSITE_CORRESP = {
 # Interpretations that can be worded in 1 or 2-component sentences at random
 # ADD_POSECODE_KIND, ADD_SUPER_POSECODE: add interpretations if there are some new 
 # (currently, this holds only for distance posecodes)
-OK_FOR_1CMPNT_OR_2CMPNTS = POSECODE_OPERATORS_VALUES["distance"]["category_names"]
+OK_FOR_1CMPNT_OR_2CMPNTS = POSECODE_OPERATORS_VALUES["distance"]["category_names"] + ['touch']
 
 subj = "{} %s"
 sj = "{}"
@@ -901,14 +993,56 @@ ENHANCE_TEXT_1CMPNT = {
         [f"{subj} {c}" for c in ["vertical", "upright", "straightened up", "straight"]],
     "horizontal":
         [f"{subj} {c}" for c in ["horizontal", "flat", "aligned horizontally", "parallel to the ground", "parallel to the floor"]],
-    "bent_left":
+    # "bent_left":
+        # [f"{subj} {c} {d} left{e}" for c in ["bent to", "leaning on", "bent on", "inclined to", "angled towards"] for d in ['the', 'their'] for e in ['',' side']],
+    # "bent_right":
+        # [f"{subj} {c} {d} right{e}" for c in ["bent to", "leaning on", "bent on", "inclined to", "angled towards"] for d in ['the', 'their'] for e in ['',' side']],
+    # "bent_backward":
+        # [f"{subj} {c}" for c in ["bent backwards", "leaning back", "leaning backwards", "inclined backward", "angled backwards", "reaching backwards", "arched back"]],
+    # "bent_forward":
+        # [f"{subj} {c}" for c in ["bent forward", "leaning forwards", "bent over", "inclined forward", "angled forwards", "reaching forward", "hunched over"]],
+    "body lean left":
         [f"{subj} {c} {d} left{e}" for c in ["bent to", "leaning on", "bent on", "inclined to", "angled towards"] for d in ['the', 'their'] for e in ['',' side']],
-    "bent_right":
+    "body lean left slightly":
+        [f"{subj} {c} {d} left{e}" for c in ["bent a bit to", "leaning slightly on", "inclined a bit to", "angled slightly towards"] for d in ['the', 'their'] for e in ['',' side']],
+    "body lean right":
         [f"{subj} {c} {d} right{e}" for c in ["bent to", "leaning on", "bent on", "inclined to", "angled towards"] for d in ['the', 'their'] for e in ['',' side']],
-    "bent_backward":
-        [f"{subj} {c}" for c in ["bent backwards", "leaning back", "leaning backwards", "inclined backward", "angled backwards", "reaching backwards", "arched back"]],
-    "bent_forward":
-        [f"{subj} {c}" for c in ["bent forward", "leaning forwards", "bent over", "inclined forward", "angled forwards", "reaching forward", "hunched over"]],
+    "body lean right slightly":
+        [f"{subj} {c} {d} right{e}" for c in ["bent a bit to", "leaning slightly on", "inclined a bit to", "angled slightly towards"] for d in ['the', 'their'] for e in ['',' side']],
+    "body incline backward":
+        [f"{subj} {c}" for c in ["bent backwards", "leaning back", "leaning backwards", "inclined backwards", "angled backwards", "reaching backwards", "arched back"]],
+    "body incline backward slightly":
+        [f"{subj} {c}" for c in ["bent backwards slightly", "leaning a bit back", "leaning slightly backwards", "inclined slightly backwards", "angled backwards a bit", "arched back a bit"]],
+    "body incline forward":
+        [f"{subj} {c}" for c in ["bent forwards", "leaning forwards", "bent over", "inclined forwards", "angled forwards", "reaching forwards", "hunched"]],
+    "body incline forward slightly":
+        [f"{subj} {c}" for c in ["bent forwards slightly", "leaning a bit forwards", "bent over forwards slightly", "inclined slightly forward", "angled forwards a bit", "hunched forwards slightly", "hunched a bit"]],
+    "body twist right":
+        [f"{subj} {c} right" for c in ["twisted towards the", "turned to the", "pivoted to the", "facing", "rotated to"]],
+    "body twist right slightly":
+        [f"{subj} {c} right" for c in ["twisted a bit towards the", "turned slightly to the", "partly pivoted to the", "facing rather", "rotated a bit to"]],
+    "body twist left":
+        [f"{subj} {c} left" for c in ["twisted towards the", "turned to the", "pivoted to the", "facing", "rotated to"]],
+    "body twist left slightly":
+        [f"{subj} {c} left" for c in ["twisted a bit towards the", "turned slightly to the", "partly pivoted to the", "facing rather", "rotated a bit to"]],
+    # ---- special case for the head;
+    # format "{}" with the determiner, and "%s" with the verb 
+    "head incline backward":
+        ["{determiner} chin %s away from {determiner} chest", "{determiner} head %s tilted backwards", "{determiner} head %s tilted outwards", "{determiner} crown %s inclined towards the back"],
+    "head incline forward":
+        ["{determiner} chin %s tucked to {determiner} chest", "{determiner} chin %s towards {determiner} chest", "{determiner} head %s tilted inwards"],
+    "head turn right":
+        ["{determiner} head %s looking to the right", "{determiner} face %s looking right", "{subject} %s gazing to the right", "{determiner} head %s turned right"],
+    "head turn right slightly":
+        ["{determiner} head %s looking slightly to the right", "{determiner} face %s looking right a bit", "{subject} %s gazing to the right slightly", "{determiner} head %s turned a bit to the right"],
+    "head turn left":
+        ["{determiner} head %s looking to the left", "{determiner} face %s looking left", "{subject} %s gazing to the left", "{determiner} head %s turned left"],
+    "head turn left slightly":
+        ["{determiner} head %s looking slightly to the left", "{determiner} face %s looking left a bit", "{subject} %s gazing to the left slightly", "{determiner} head %s turned a bit to the left"],
+    "head incline right":
+        ["{determiner} head %s tilted to the right", "{determiner} head %s tilted rightwards"],
+    "head incline left":
+        ["{determiner} head %s tilted to the left", "{determiner} head %s tilted leftwards"],
     "kneeling":
         [f"{subj} {c}" for c in ["kneeling", "in a kneeling position", "on their knees", "on the knees"]] + [f"{d} knees are on the ground" for d in ['the', 'their']],
     "kneel_on_left":
@@ -917,6 +1051,8 @@ ENHANCE_TEXT_1CMPNT = {
         [f"{subj} {c}" for c in flatten_list([[f"kneeling on {d} right knee", f"kneeling on {d} right leg", f"on {d} right knee"] for d in ['the', 'their']])],
     "on_ground":
         [f"{subj} {c}" for c in ["on the ground", "on the floor", "down on the ground"]],
+    "touch": # subject if plural (eg. the knees, the hands)
+        [f"{subj} {c}" for c in ["in contact", "touching", "brushing"]],
     # ADD_POSECODE_KIND: add template sentences for new interpretations if any 
     # ADD_SUPER_POSECODE
 }
@@ -949,6 +1085,8 @@ ENHANCE_TEXT_2CMPNTS = {
         [f"{subj} {c} {sj}" for c in ["vertically aligned with", "vertically in line with"]],
     "yz-aligned": # can only move along the x axis
         [f"{subj} {c} {sj}" for c in ["at the same height as", "even in height with", "level with", "horizontally aligned with"]],
+    "touch":
+        [f"{subj} {c} {sj}" for c in ["in contact with", "touching", "brushing"]],
     # ADD_POSECODE_KIND: add interpretations if there are some new 
     # ADD_SUPER_POSECODE
     }

@@ -10,7 +10,6 @@
 import torch
 import math
 import sys
-import shutil
 import os
 os.umask(0x0002)
 os.environ['TOKENIZERS_PARALLELISM'] = 'false'
@@ -34,7 +33,7 @@ import text2pose.utils_logging as logging
 class PoseTextTrainer(GenericTrainer):
 
 	def __init__(self, args):
-		super(PoseTextTrainer, self).__init__(args)
+		super(PoseTextTrainer, self).__init__(args, retrieval_trainer=True)
 
 	
 	def load_dataset(self, split, caption_index, tokenizer_name=None):
@@ -43,9 +42,9 @@ class PoseTextTrainer(GenericTrainer):
 		data_size = self.args.data_size if split=="train" else None
 
 		if "posescript" in self.args.dataset:
-			d = PoseScript(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, data_size=data_size)
+			d = PoseScript(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=self.args.num_body_joints, data_size=data_size)
 		elif "posefix" in self.args.dataset:
-			d = PoseFix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, data_size=data_size, posescript_format=True)
+			d = PoseFix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=self.args.num_body_joints, data_size=data_size, posescript_format=True)
 		else:
 			raise NotImplementedError
 		return d
@@ -55,14 +54,15 @@ class PoseTextTrainer(GenericTrainer):
 		print('Load model')
 		self.model = PoseText(text_encoder_name=self.args.text_encoder_name,
 							transformer_topping=self.args.transformer_topping,
-							latentD=self.args.latentD)
+							latentD=self.args.latentD,
+							num_body_joints=self.args.num_body_joints)
 		self.model.to(self.device)
 
 
 	def get_param_groups(self):
 		param_groups = []
 		param_groups.append({'params': self.model.pose_encoder.parameters(), 'lr': self.args.lr*self.args.lrposemul})
-		param_groups.append({'params': self.model.text_encoder.parameters(), 'lr': self.args.lr*self.args.lrtextmul}) 
+		param_groups.append({'params': [p for k,p in self.model.text_encoder.named_parameters() if 'pretrained_text_encoder.' not in k], 'lr': self.args.lr*self.args.lrtextmul})
 		param_groups.append({'params': [self.model.loss_weight]})
 		return param_groups
 
@@ -80,55 +80,10 @@ class PoseTextTrainer(GenericTrainer):
 													step_size=self.args.lr_step,
 													gamma=self.args.lr_gamma,
 													last_epoch=-1)
-
-
-	def start_or_resume_training(self):
-		if os.path.isfile(self.ckpt_fname): # resume training
-			print("Resume training. Load weights from last checkpoint.")
-			ckpt = torch.load(self.ckpt_fname, 'cpu')
-			self.start_epoch = ckpt['epoch'] + 1
-			self.best_score = ckpt.get('best_score', 0.0)
-			self.model.load_state_dict(ckpt['model'])
-			self.optimizer.load_state_dict(ckpt['optimizer'])
-			if self.lr_scheduler:
-				self.lr_scheduler.load_state_dict(ckpt['scheduler'])
-		else:
-			self.start_epoch = 0
-			self.best_score = 0
-			if self.args.pretrained: # load pretrained weights
-				pretrained_path = config.shortname_2_model_path[self.args.pretrained].format(seed=self.args.seed)
-				print(f'Loading pretrained model: {pretrained_path}')
-				ckpt = torch.load(pretrained_path, 'cpu')
-				self.model.load_state_dict(ckpt['model'])
-
-
-	def has_model_improved(self, val_stats):
-		if val_stats and val_stats['mRecall'] > self.best_score:
-			self.best_score = val_stats['mRecall']
-			return True
-		return False
 	
 
-	def save_checkpoint(self, save_best_model, epoch):
-		tosave = {'epoch': epoch,
-				'model': self.model.state_dict(),
-				'optimizer': self.optimizer.state_dict(),
-				'scheduler': self.lr_scheduler.state_dict() if self.lr_scheduler else None,
-				'args': self.args,
-				'best_score': self.best_score}
-		# overwrite the current checkpoint after each epoch
-		torch.save(tosave, self.ckpt_fname)
-		# overwrite the "best" checkpoint each time the model improves
-		if save_best_model:
-			shutil.copyfile(self.ckpt_fname, os.path.join(self.args.output_dir, 'checkpoint_best.pth'))
-		# save an independent checkpoint every required time step
-		if epoch and epoch % self.args.saving_ckpt_step == 0:
-			shutil.copyfile(self.ckpt_fname, os.path.join(self.args.output_dir, 'checkpoint_{:d}.pth'.format(epoch)))
-		
-
 	def init_other_training_elements(self):
-		self.init_lr_scheduler()
-		self.data_augmentation_module = DataAugmentation(self.args, mode="posescript", tokenizer_name=get_tokenizer_name(self.args.text_encoder_name))
+		self.data_augmentation_module = DataAugmentation(self.args, mode="posescript", tokenizer_name=get_tokenizer_name(self.args.text_encoder_name), nb_joints=self.args.num_body_joints)
 
 
 	def training_epoch(self, epoch):
@@ -137,7 +92,9 @@ class PoseTextTrainer(GenericTrainer):
 	
 
 	def validation_epoch(self, epoch):
-		val_stats = self.validate(epoch=epoch)
+		val_stats = {}
+		if self.args.val_every and (epoch+1)%self.args.val_every==0:
+			val_stats = self.validate(epoch=epoch)
 		return val_stats
 	
 

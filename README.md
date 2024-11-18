@@ -1,9 +1,10 @@
 # 3D Human Poses from/with Natural Language.
 
-This repository groups the official PyTorch implementations for the following two papers: 
+This repository groups the official PyTorch implementations for the following papers: 
 * **["PoseScript: 3D Human Poses from Natural Language"](https://europe.naverlabs.com/research/computer-vision/posescript/)**, (**ECCV 2022**).
-  *See branch `posescript` for the original code version.*
-* **["PoseFix: Correcting 3D Human Poses with Natural Language"](https://europe.naverlabs.com/research/computer-vision/posefix/)**, (**ICCV 2023**)
+  *See branch `posescript` for the previous (original) code version.*
+* **["PoseFix: Correcting 3D Human Poses with Natural Language"](https://europe.naverlabs.com/research/computer-vision/posefix/)**, (**ICCV 2023**) *See branch `posefix` for the previous (original) code version of the automatic captioning pipelines.*
+* Improvements to the automatic captioning pipelines, proposed in **[PoseEmbroider: towards a 3D, visual, semantic-aware human pose representation](https://europe.naverlabs.com/research/publications-enhanced/poseembroider-towards-a-3d-visual-semantic-aware-human-pose-representation/)**, (**ECCV 2024**).
 
 ![Text2Pose project](./images/main_picture.png)
 
@@ -64,13 +65,19 @@ python setup.py develop
 
 If problems with OpenGL (setting: linux, anaconda3), check [here](https://stackoverflow.com/a/72427700).
 
-**Note**: using cuda version 10.2 (please modify *requirements.txt* otherwise).
-
 You may also have to run the following in a python interpreter:
 ```python
 import nltk
 nltk.download('punkt')
 ```
+
+To add contact information when generating automatic descriptions (-Script) and instructions (-Fix):
+```bash
+git clone git@github.com:muelea/selfcontact.git
+cd selfcontact
+pip install .
+```
+Modify the value of `SELFCONTACT_ESSENTIALS_DIR` in *./src/text2pose/config.py* depending on where it got installed.
 </details>
 
 
@@ -111,6 +118,9 @@ Both the PoseScript and the PoseFix datasets link human-written texts and automa
   </details>
 - The BABEL dataset can be downloaded from [here](https://babel.is.tue.mpg.de/data.html).
 - The SMPL-H body models can be downloaded from [here](https://mano.is.tue.mpg.de/) by clicking on the link _"Extended SMPL+H model"_ on the download page.
+- The SMPL-X body models can be downloaded from [here](https://smpl-x.is.tue.mpg.de/download.php), by clicking on the link _"Download SMPL-X v1.1 (NPZ+PKL, 830 MB) - Use this for SMPL-X Python codebase"_ on the download page.
+
+  **NOTE**: currently, this code works with the AMASS (*human_body_prior*) codebase and corresponding SMPL-H models. SMPL-X models are only used in *./src/text2pose/posescript/format_contact_info.py*, which is not needed for running the code corresponding to the original PoseScript/PoseFix papers.
 - The GloVe pretrained word embeddings can be downloaded [here](https://nlp.stanford.edu/data/glove.840B.300d.zip).
 </details>
 
@@ -124,7 +134,8 @@ Both the PoseScript and the PoseFix datasets link human-written texts and automa
 - ***GENERAL_EXP_OUTPUT_DIR***: where models will be saved (along with logs, generated poses...)
 - ***POSESCRIPT_LOCATION***: where PoseScript is located (vocabulary files & files related to automatic captions will be generated into this directory).
 - ***POSESFIX_LOCATION***: where PoseFix is located (vocabulary files & files related to automatic modifiers will be generated into this directory).
-- ***SMPLH_BODY_MODEL_PATH***: where SMPL-H body models are located.
+- ***SMPLH_BODY_MODEL_PATH***: where SMPL-H body models (*human_body_prior* codebase) are located.
+- ***SMPLX_BODY_MODEL_PATH***: where the SMPL-X body models (*smplx* codebase) are located.
 - ***AMASS_FILE_LOCATION***: where AMASS is located.
 - ***BABEL_LOCATION***: where BABEL is located.
 - ***GLOVE_DIR***: where *glove.840B.300d.txt* is located (unzip the downloaded archive).
@@ -174,22 +185,24 @@ The filenames provided in argument for generating the PoseScript or the PoseFix 
 <details>
 <summary>Click for details.</summary>
 
-Download HuggingFace checkpoints, by running the following python script:
-```python
-import os
-from transformers import AutoTokenizer, AutoModel
-import config
+* Define where to save the pretrained language models, by modifiying the value of `TRANSFORMER_CACHE_DIR` in *./src/text2pose/config.py* following your own preferences.
 
-model_type = "distilbert-base-uncased"
+* Download HuggingFace checkpoints, by running the following python script:
+  ```python
+  import os
+  from transformers import AutoTokenizer, AutoModel
+  import text2pose.config as config
 
-# download the tokenizer
-tokenizer = AutoTokenizer.from_pretrained(model_type)
-tokenizer.save_pretrained(os.path.join(config.TRANSFORMER_CACHE_DIR, model_type))
+  model_type = "distilbert-base-uncased"
 
-# download the encoder
-text_enc = AutoModel.from_pretrained(model_type)
-text_enc.save_pretrained(os.path.join(config.TRANSFORMER_CACHE_DIR, model_type))
-```
+  # download the tokenizer
+  tokenizer = AutoTokenizer.from_pretrained(model_type)
+  tokenizer.save_pretrained(os.path.join(config.TRANSFORMER_CACHE_DIR, model_type))
+
+  # download the encoder
+  text_enc = AutoModel.from_pretrained(model_type)
+  text_enc.save_pretrained(os.path.join(config.TRANSFORMER_CACHE_DIR, model_type))
+  ```
 </details>
 
 ## Explore datasets

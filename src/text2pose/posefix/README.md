@@ -88,6 +88,8 @@ To generate automatic modifiers, please follow these steps:
 	| pfA       | `python posefix/correcting.py --version_name captions_pfA` |
 	| pfB       | `python posefix/correcting.py --version_name captions_pfB --random_skip` |
 	| pfC       | `python posefix/correcting.py --version_name captions_pfC --random_skip --simplified_captions` |
+	
+	*Note that some paircodes were added since, for the release of PoseEmbroider.*
 	</details>
 
 ## Citation

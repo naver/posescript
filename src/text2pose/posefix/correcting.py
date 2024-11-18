@@ -1,6 +1,6 @@
 ##############################################################
 ## text2pose                                                ##
-## Copyright (c) 2023                                       ##
+## Copyright (c) 2023, 2024                                 ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
 ## and Naver Corporation                                    ##
 ## Licensed under the CC BY-NC-SA 4.0 license.              ##
@@ -10,6 +10,7 @@
 # requires at least Python 3.6 (order preserved in dicts)
 
 import os, sys, time
+import ast
 import json
 import random
 import copy
@@ -20,6 +21,7 @@ from text2pose.posescript.posecodes import POSECODE_OPERATORS
 from text2pose.posescript.captioning_data import *
 from text2pose.posescript.captioning import POSECODE_INTERPRETATION_SET, prepare_posecode_queries, prepare_super_posecode_queries, format_and_skip_posecodes
 from text2pose.posescript.utils import *
+from text2pose.posescript.format_contact_info import from_joint_rotations_to_contact_list
 
 from text2pose.posefix.paircodes import PAIRCODE_OPERATORS, PaircodeRootRotation
 from text2pose.posefix.corrective_data import * # should "overwrite" some values from posescript.captioning
@@ -41,6 +43,7 @@ from text2pose.posefix.corrective_data import * # should "overwrite" some values
 PAIRCODE_INTERPRETATION_SET = POSECODE_INTERPRETATION_SET + [f'{PAIR_INTPTTN_PREFIX}{v}' for v in flatten_list([p["category_names"] for p in PAIRCODE_OPERATORS_VALUES.values()])]
 pair_sp_interpretation_set = [f'{PAIR_INTPTTN_PREFIX}{v[1][1]}' for v in SUPER_PAIRCODES if f'{PAIR_INTPTTN_PREFIX}{v[1][1]}' not in PAIRCODE_INTERPRETATION_SET]
 PAIRCODE_INTERPRETATION_SET += list_remove_duplicate_preserve_order(pair_sp_interpretation_set)
+PAIRCODE_INTERPRETATION_SET += [f'{PAIR_INTPTTN_PREFIX}touch'] # for contact codes
 PAIRCODE_INTPTT_NAME2ID = {intptt_name:i for i, intptt_name in enumerate(PAIRCODE_INTERPRETATION_SET)}
 CODES_OK_FOR_1CMPNT_OR_2CMPNTS_IDS = [PAIRCODE_INTPTT_NAME2ID[n] for n in OK_FOR_1CMPNT_OR_2CMPNTS+PAIR_OK_FOR_1CMPNT_OR_2CMPNTS]
 
@@ -93,12 +96,27 @@ def intptt_largest_magnitude(intptt1, intptt2):
 ## MAIN
 ################################################################################
 
-def main(pose_pairs, coords, global_rotation_change, save_dir, simplified_instructions=False,
-		random_skip=True, verbose=True):
+def main(pose_pairs, coords, global_rotation_change=None,
+		 joint_rotations_type="smplh", joint_rotations=None,
+		 load_contact_code_file=None,
+		 add_description_text_pieces=True, # eg. "the feet should be shoulder-width apart"
+		 save_dir=None, simplified_instructions=False,
+		 random_skip=True, verbose=True, ret_type="dict"):
+	"""
+	pose_pairs: torch tensor, with elements giving local indices to (pose A, pose B)
+	coords: shape (nb_poses, nb_joints, 3)
+	joint_rotations: shape (nb_poses, nb_joints, 3)
+	load_contact_codes_file: (path to file, boolean) where the boolean tells
+            whether to load the contact codes from file.
+            Note: useful to compute contact codes only once (more efficient), if
+            generating several texts.
+		
+	NOTE: expected joints: (global_orient, body_pose, optional:left_hand_pose, optional:right_hand_pose)
+	"""
 
 	# Select & complete joint coordinates (prosthesis phalanxes, virtual joints)
 	if verbose: print("Formating input...")
-	coords = prepare_input(coords) 
+	coords, joint_rotations = prepare_input(coords, joint_rotations)
 
 	# Prepare posecode & paircode queries
 	# (hold all info about posecodes & paircodes, essentially using ids)
@@ -110,55 +128,103 @@ def main(pose_pairs, coords, global_rotation_change, save_dir, simplified_instru
 
 	# Eval & interprete & elect eligible elementary posecodes
 	if verbose: print("Eval & interprete & elect eligible posecodes...")
-	pair_interpretations, pair_eligibility, p_interpretations, p_eligibility = infer_codes(pose_pairs, coords, p_queries, sp_queries, pair_queries, spair_queries, verbose=verbose)
+	pair_interpretations, pair_eligibility, p_interpretations, p_eligibility = infer_codes(pose_pairs, coords, p_queries, sp_queries, pair_queries, spair_queries, joint_rotations=joint_rotations, verbose=verbose)
 	# save
-	saved_filepath = os.path.join(save_dir, "codes_intptt_eligibility.pt")
-	torch.save([pair_interpretations, pair_eligibility, p_interpretations, p_eligibility, PAIRCODE_INTPTT_NAME2ID], saved_filepath)
-	print("Saved file:", saved_filepath)
+	if save_dir:
+		saved_filepath = os.path.join(save_dir, "codes_intptt_eligibility.pt")
+		torch.save([pair_interpretations, pair_eligibility, p_interpretations, p_eligibility, PAIRCODE_INTPTT_NAME2ID], saved_filepath)
+		print("Saved file:", saved_filepath)
 
 	# Format posecode & paircodes for future steps & apply random skip
 	if verbose: print("Formating posecodes and paircodes...")
-	posecodes, posecodes_skipped = format_and_skip_posecodes(p_interpretations,
-															p_eligibility,
-															p_queries,
-															sp_queries,
-															random_skip,
-															verbose = verbose)
+	if add_description_text_pieces:
+		posecodes, posecodes_skipped = format_and_skip_posecodes(p_interpretations,
+																p_eligibility,
+																p_queries,
+																sp_queries,
+																random_skip,
+																verbose = verbose)
+	else:
+		print("Not considering any posecode to form the text (ie. they can contribute to define super-paircodes, but cannot make it to the text by themselves).")
+		posecodes, posecodes_skipped = [], []
 	paircodes, paircodes_skipped = format_and_skip_paircodes(pair_interpretations,
 															pair_eligibility,
 															pair_queries,
 															spair_queries,
 															random_skip,
 															verbose = verbose)
-	# save
-	saved_filepath = os.path.join(save_dir, "codes_formated.pt")
-	torch.save([paircodes, paircodes_skipped, posecodes, posecodes_skipped], saved_filepath)
-	print("Saved file:", saved_filepath)
-
-	# Keep only paircodes & posecodes of pose B
-	codes = [paircodes[pair_id] + posecodes[pose_ids[1]] for pair_id, pose_ids in enumerate(pose_pairs)]
 	
-	# Aggregate & discard paircodes (leverage relations)
-	if verbose: print("Aggregating paircodes...")
-	paircodes = aggregate_paircodes(codes,
-									simplified_instructions)
+	# Add contact posecodes if possible
+	if joint_rotations is not None:
+		if verbose: print("Adding contact codes...")
+		ta = time.time()
+		if load_contact_code_file[1]:
+			posecodes_contact = torch.load(load_contact_code_file[0])
+			print("Load data temporarily from", load_contact_code_file[0])
+		else:
+			# since contact codes are added at this stage, they won't be skipped in
+			# any ways (which is OK, because contact information is rare and important)
+			posecodes_contact = from_joint_rotations_to_contact_list(joint_rotations,
+																joint_rotations_type,
+																intptt_id=PAIRCODE_INTPTT_NAME2ID[f'{PAIR_INTPTTN_PREFIX}touch'])
+			torch.save(posecodes_contact, load_contact_code_file[0])
+			print("Saving data temporarily at", load_contact_code_file[0])
+
+		# seamlessly turn posecodes_contact into paircodes_contact by keeping
+		# only those that were added when going from pose A to pose B
+		# -- convert the subsublists to something hashable (eg. make them string)
+		posecodes_contact = [[str(ll) for ll in l] for l in posecodes_contact]
+		# -- filter out subsublists (keep only those that are in B but not in A)
+		paircodes_contact = [set(posecodes_contact[pose_ids[1]]).difference(set(posecodes_contact[pose_ids[0]])) for pose_ids in pose_pairs]
+		# -- convert back subsublists from string to lists
+		paircodes_contact = [[ast.literal_eval(ll) for ll in list(l)] for l in paircodes_contact]
+		# -- add these to the initial sets of paircodes
+		paircodes = [paircodes[i] + paircodes_contact[i] for i in range(len(pose_pairs))]
+		print(f"Computing contact codes: took {round(time.time() - ta)} seconds.")
+	
 	# save
-	saved_filepath = os.path.join(save_dir, "codes_aggregated.pt")
-	torch.save(posecodes, saved_filepath)
-	print("Saved file:", saved_filepath)
+	if save_dir:
+		saved_filepath = os.path.join(save_dir, "codes_formated.pt")
+		torch.save([paircodes, paircodes_skipped, posecodes, posecodes_skipped], saved_filepath)
+		print("Saved file:", saved_filepath)
+
+	# Get the final list of codes (all paircodes & filetered posecodes of pose B)
+	if add_description_text_pieces:
+		if verbose: print("Filtering out non-correction related posecodes...")
+		ta = time.time()
+		codes = filter_out_posecodes(pose_pairs, paircodes, posecodes)
+		print(f"Filtering posecodes: took {round(time.time() - ta)} seconds.")
+	else:
+		codes = paircodes
+
+	# Aggregate & discard codes (leverage relations)
+	if verbose: print("Aggregating paircodes...")
+	codes = aggregate_paircodes(codes, simplified_instructions)
+	
+	# save
+	if save_dir:
+		saved_filepath = os.path.join(save_dir, "codes_aggregated.pt")
+		torch.save(codes, saved_filepath)
+		print("Saved file:", saved_filepath)
 
 	# Produce instructions
 	if verbose: print("Producing instructions...")
-	d_general, determiners = convert_codes(paircodes, simplified_instructions, verbose)
-	d_rotation = get_global_rotation_sentence(pose_pairs, global_rotation_change, determiners)
-	instructions = [d_rotation[i] + d_general[i] for i in range(len(d_general))]
+	d_general, determiners = convert_codes(codes, simplified_instructions, verbose)
+	if global_rotation_change:
+		d_rotation = get_global_rotation_sentence(pose_pairs, global_rotation_change, determiners)
+		instructions = [d_rotation[i] + d_general[i] for i in range(len(d_general))]
+	else:
+		instructions = d_general
+
+	if ret_type=="dict":
+		instructions = {i:instructions[i] for i in range(len(instructions))}
 
 	# save
-	saved_filepath = os.path.join(save_dir, "instructions.json")
-	instructions = {i:instructions[i] for i in range(len(instructions))}
-	with open(saved_filepath, "w") as f:
-		json.dump(instructions, f, indent=4, sort_keys=True)
-	print("Saved file:", saved_filepath)
+	if save_dir:
+		saved_filepath = os.path.join(save_dir, "instructions.json")
+		with open(saved_filepath, "w") as f:
+			json.dump(instructions, f, indent=4, sort_keys=True)
+		print("Saved file:", saved_filepath)
 
 	return instructions
 	
@@ -248,6 +314,11 @@ def prepare_paircode_queries(offset=0):
 			"offset": offset,
 		}
 		offset += len(PAIRCODE_OPERATORS_VALUES[paircode_kind]['category_names']) # works because category names are all unique for elementary paircodes
+	
+	# assert all intepretations are unique for elementary paircodes
+	interpretation_set = flatten_list([p["category_names"] for p in PAIRCODE_OPERATORS_VALUES.values()])
+	assert len(set(interpretation_set)) == len(interpretation_set), "Each elementary paircode interpretation name must be unique (category names in PAIRCODE_OPERATORS_VALUES)."
+	
 	return paircode_queries
 
 
@@ -346,7 +417,7 @@ def prepare_super_paircode_queries(p_queries, pair_queries):
 ## INFER POSECODES
 ################################################################################
 
-def infer_codes(pair_ids, coords, p_queries, sp_queries, pair_queries, spair_queries, verbose = True):
+def infer_codes(pair_ids, coords, p_queries, sp_queries, pair_queries, spair_queries, joint_rotations = None, verbose = True):
 	
 	# init
 	nb_poses = len(coords)
@@ -359,7 +430,7 @@ def infer_codes(pair_ids, coords, p_queries, sp_queries, pair_queries, spair_que
 	# infer elementary posecodes
 	for p_kind, p_operator in POSECODE_OPERATORS.items():
 		# evaluate posecodes
-		val = p_operator.eval(p_queries[p_kind]["joint_ids"], coords)
+		val = p_operator.eval(p_queries[p_kind]["joint_ids"], coords if p_operator.input_kind=="coords" else joint_rotations)
 		# add some randomization to represent a bit human subjectivity
 		val = p_operator.randomize(val)
 		# interprete the measured values
@@ -405,7 +476,7 @@ def infer_codes(pair_ids, coords, p_queries, sp_queries, pair_queries, spair_que
 	# infer elementary paircodes
 	for p_kind, p_operator in PAIRCODE_OPERATORS.items():
 		# evaluate posecodes
-		val = p_operator.eval(pair_ids, pair_queries[p_kind]["joint_ids"], coords)
+		val = p_operator.eval(pair_ids, pair_queries[p_kind]["joint_ids"], coords if p_operator.input_kind=="coords" else joint_rotations)
 		# add some randomization to represent a bit human subjectivity
 		val = p_operator.randomize(val)
 		# interprete the measured values
@@ -665,6 +736,105 @@ def format_and_skip_paircodes(pair_interpretations, pair_eligibility, pair_queri
 ## AGGREGATE CODES
 ################################################################################
 
+def filter_out_posecodes(pose_pairs, paircodes, posecodes, extra_verbose=False):
+	"""
+	Keep only posecodes of pose B about body parts that changed between pose A
+	and pose B (ie. that are mentioned in the paircodes), so as to keep only
+	change-informative posecodes (otherwise, it is descriptive noise).
+	"""
+
+	# build a dict {body_part:(limb,number)} where:
+	# 	- `limb` (upper-left|upper-right|lower-left|lower-right) tells whether
+	# 		the body parts are kinematically related at all
+	# 	- the number reflects the kinematic dependance (ie. if the number
+	#       corresponding to body part Y is higher than the number for body part
+	# 		X, it means there is dependance) 
+	kindep = {}
+	for side in ['left', 'right']:
+		for branch, kinlist in zip(['upper', 'lower'], [kinematic_side_upper, kinematic_side_lower]):
+			for i, bp in enumerate(kinlist):
+				try:
+					bp = bp % side
+				except TypeError:
+					pass
+				kindep[bp] = kindep.get(bp, ([], []))
+				kindep[bp][0].append(f'{branch}-{side}')
+				kindep[bp][1].append(i)
+
+	# parse side & body parts
+	def add_bp(current_list, side, part):
+		if not side and not part: return current_list
+		if not side: return current_list + [part]
+		if side=='<plural>':
+			sing_part = normalize_to_singular(part)
+			return current_list + [f'right_{sing_part}', f'left_{sing_part}']
+		else: return current_list + [f'{side}_{part}']
+
+	# filter out posecodes
+	codes = []
+	removed_posecodes = 0
+	for pair_id, pose_ids in enumerate(pose_pairs):
+		# get the list of body parts that are changed (as per the paircodes)
+		changed_body_parts = []
+		for p in paircodes[pair_id]:
+			changed_body_parts = add_bp(changed_body_parts, p[0], p[1])
+			changed_body_parts = add_bp(changed_body_parts, p[3], p[4])
+		changed_body_parts = list(set(changed_body_parts)) # unicity
+		if extra_verbose: print("\nChanged body parts:", changed_body_parts)
+		# filter out posecodes
+		selected_posecodes = []
+		for pc in posecodes[pose_ids[1]]: # posecodes of pose B
+			keep = False
+			bpl = add_bp([], pc[0], pc[1]) # usually a list of one element, except if the topic was plural
+			bpl = add_bp(bpl, pc[3], pc[4])
+			if extra_verbose: print("Body parts in posecode:", bpl)
+			for bp in bpl:
+				for bpc in changed_body_parts:
+					# check the kinematic dependance between each of the changed
+					# body parts and the body parts of the posecode
+					# (a) the body part is the same
+					if bp == bpc:
+						# shortcut: obviously, there is dependence
+						keep = True
+						break
+					# (b) the body parts are kinematically related
+					if kindep.get(bp, False) and kindep.get(bpc, False):
+						common_branch = list(set(kindep[bp][0]).intersection(set(kindep[bpc][0])))
+						if common_branch:
+							# kinematic dependance only happens if both body parts
+							# belong to the same kinematic body branch
+							common_branch = common_branch[0] # there is probably just one
+							branch_ind_bp = kindep[bp][0].index(common_branch)
+							branch_ind_bpc = kindep[bpc][0].index(common_branch)
+							if kindep[bp][1][branch_ind_bp] > kindep[bpc][1][branch_ind_bpc]:
+								keep = True
+								break
+				else:
+					continue # continue if the inner loop was not broken
+				break # the inner loop was broken, break the outer loop
+			if keep:
+				selected_posecodes.append(pc)
+		# final set of codes for that pair
+		if extra_verbose: print(selected_posecodes)
+		removed_posecodes += len(posecodes[pose_ids[1]]) - len(selected_posecodes)
+		codes.append(paircodes[pair_id] + selected_posecodes)
+
+	print(f"Removed {removed_posecodes} posecodes, not informing about moved body parts (out of {sum([len(posecodes[pose_ids[1]]) for pose_ids in pose_pairs])}).")
+
+	# TOY EXAMPLES:
+	# 1) no posecode should be kept
+	# - paircode: [['left', 'hand', 63, None, None], ['left', 'foot', 65, None, None]]
+	# - posecode (B): [['right', 'forearm', 25, None, None]]
+	# 2) keep only the posecode about the right forearm
+	# - paircode: [['right', 'elbow', 44, None, None], ['right', 'hand', 53, None, None]]
+	# - posecode (B): [['left', 'knee', 5, None, None], ['right', 'knee', 5, None, None], ['left', 'elbow', 2, None, None], ['right', 'forearm', 27, None, None], ['<plural>', 'feet', 7, None, None]]
+	# 3) must keep the posecode about the R hand & L knee
+	# - paircode: [['left', 'knee', 42, None, None], ['left', 'foot', 53, None, None], ['left', 'foot', 63, None, None]]
+	# - posecode (B): [['left', 'hand', 6, 'right', 'hand'], ['right', 'hand', 6, 'left', 'knee'], ['right', 'hand', 39, 'right', 'thigh'], ['right', 'hand', 38, 'right', 'shin'], ['right', 'foot', 38, 'right', 'forearm']]
+
+	return codes
+
+
 def aggregate_paircodes(paircodes, simplified_instructions=False,
 						extra_verbose=False):
 	
@@ -698,7 +868,7 @@ def aggregate_paircodes(paircodes, simplified_instructions=False,
 					#     and the two second body parts belong (together) to a larger
 					#     body part (ie. same side for the two second body parts)
 					if pA[0] == pB[0] and pA[3] == pB[3] \
-						and intptt_same_direction(pA[2], pB[2]) \
+						and (intptt_same_direction(pA[2], pB[2]) or pA[2] == pB[2]) \
 						and random.random() < PAIR_PROP_AGGREGATION_HAPPENS:
 						body_part_1 = ENTITY_AGGREGATION.get((pA[1], pB[1]), False)
 						body_part_2 = ENTITY_AGGREGATION.get((pA[4], pB[4]), False)
@@ -724,6 +894,14 @@ def aggregate_paircodes(paircodes, simplified_instructions=False,
 					#     "the left arm is lower"
 					# b) [CASE IN WHICH AGGREGATION DOES NOT HAPPEN, SO NO PAIRCODE SHOULD BE REMOVED]
 					#    "the right knee is lower, the right elbow is lower"
+			
+			# NOTE: due to entity aggregations representing inclusions (eg. the
+			# L toes touch the R foot + the L foot touch the R foot ==> the L
+			# foot touches the R foot); and some codes (eg. contact codes) which
+			# can be redundant, the entity-based aggregation rule may end up
+			# duplicating existing codes. Ensure code unicity:
+			updated_paircodes = set([tuple(l) for l in updated_paircodes]) # ensure unicity
+			updated_paircodes = [list(l) for l in list(updated_paircodes)] # convert back to list
 
 
 		#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -904,40 +1082,55 @@ def code_to_text(bp1, singplur, intptt_id, bp2, bp1_initial, simplified_instruct
 	if PAIR_INTPTTN_PREFIX in intptt_name:
 		# Select the template sentence
 		# (copy the choices to further filter them out without any problem)
-		choices = copy.copy(MODIFIER_ENHANCE_TEXT_1CMPNT[intptt_name] if bp2 is None else MODIFIER_ENHANCE_TEXT_1CMPNT[intptt_name])
-		# filter out some of the template sentences:
-		# 1) if using the NO_VERB_KEY, keep only template sentences with
-		#    "neutral" verbs like <move> or <bring>, to ensure the direction
-		#    information is not carried by the verb (eg. as in <lift> or
-		#    <lower>) but by another word so it is fine to omit the verb, and
-		#    don't repeat the subject
-		if verb_form == NO_VERB_KEY:
-			choices_ = [c for c in choices if sentence_use_neutral_verb(c)]
-			bp1_ = ""
-			# NOTE: not all interpretations may have template sentence allowing
-			# a no-verb form; if there is no template sentence available, ignore
-			# the no-verb requirement
-			if len(choices_):
-				choices = choices_
-				bp1 = bp1_
-			else:
-				# back to default case
+		
+		# --- special case
+		if 'head' in bp1_initial and intptt_name in PAIR_SPECIFIC_INTPTT_HEAD_ROTATION.keys():
+			adapted_intptt_name = PAIR_SPECIFIC_INTPTT_HEAD_ROTATION[intptt_name]
+			choices = copy.copy(MODIFIER_ENHANCE_TEXT_1CMPNT[adapted_intptt_name])
+			if verb_form == NO_VERB_KEY:
 				verb_form = PRESENT_VERB_KEY
-		# 2) if using "it/they" to refer to the main body part, keep only
-		#    template sentences where the subject is used right after the verb
-		#    ("bend it less": OK; "release the bend at it": NO (although
-		#    "release the bend at your R elbow" would work))
-		if bp1 == REFERENCE_TO_SUBJECT:
-			bp1_ = "they" if singplur==PLURAL_KEY else "it" # account for a body part that is plural (eg. the hands)
-			choices_ = [c for c in choices if sentence_use_subject_after_verb(c)]
-			# NOTE: not all interpretations may have template sentence allowing
-			# to an implicit reference to the subject; if there is no template
-			# sentence available, ignore the reference_to_subject requirement
-			if len(choices_):
-				choices = choices_
-				bp1 = bp1_
+		
+		# --- regular cases
+		else:
+			if bp2 is None:
+				choices = copy.copy(MODIFIER_ENHANCE_TEXT_1CMPNT[intptt_name])
 			else:
-				bp1 = bp1_initial
+				choices = copy.copy(MODIFIER_ENHANCE_TEXT_2CMPNTS[intptt_name])
+
+			# filter out some of the template sentences:
+			# 1) if using the NO_VERB_KEY, keep only template sentences with
+			#    "neutral" verbs like <move> or <bring>, to ensure the direction
+			#    information is not carried by the verb (eg. as in <lift> or
+			#    <lower>) but by another word so it is fine to omit the verb, and
+			#    not repeating the subject
+			if verb_form == NO_VERB_KEY:
+				choices_ = [c for c in choices if sentence_use_neutral_verb(c)]
+				bp1_ = ""
+				# NOTE: not all interpretations may have template sentence allowing
+				# a no-verb form; if there is no template sentence available, ignore
+				# the no-verb requirement
+				if len(choices_):
+					choices = choices_
+					bp1 = bp1_
+				else:
+					# back to default case
+					verb_form = PRESENT_VERB_KEY
+			# 2) if using "it/they" to refer to the main body part, keep only
+			#    template sentences where the subject is used right after the verb
+			#    ("bend it less": OK; "release the bend at it": NO (although
+			#    "release the bend at your R elbow" would work))
+			if bp1 == REFERENCE_TO_SUBJECT:
+				bp1_ = "they" if singplur==PLURAL_KEY else "it" # account for a body part that is plural (eg. the hands)
+				choices_ = [c for c in choices if sentence_use_subject_after_verb(c)]
+				# NOTE: not all interpretations may have template sentence allowing
+				# to an implicit reference to the subject; if there is no template
+				# sentence available, ignore the reference_to_subject requirement
+				if len(choices_):
+					choices = choices_
+					bp1 = bp1_
+				else:
+					bp1 = bp1_initial
+		
 		# finally, choose the template sentence
 		try:
 			template_sentence = random.choice(choices)
@@ -953,7 +1146,13 @@ def code_to_text(bp1, singplur, intptt_id, bp2, bp1_initial, simplified_instruct
 
 		# Eventually fill in the blanks of the template sentence for the paircode
 		d = format_verb(template_sentence, verb_form)
-		d = d % bp1 if bp2 is None else d % (bp1, bp2)
+		if intptt_name in PAIR_JOINT_LESS_INTPTT:
+			# the joint name should not be plugged in the template sentence
+			pass
+		elif bp2 is None:
+			d = d % bp1
+		else:
+			d = d % (bp1, bp2)
 		return d, sentence_use_neutral_verb(template_sentence)
 	
 	# B) posecode
@@ -1100,10 +1299,12 @@ def convert_codes(codes, simplified_instructions=False, verbose=True):
 		
 		# Correct syntax (post-processing)
 		# - removing wide spaces,
-		# - replacing "upperarm" by "upper arm"
+		# - replacing eg. "upperarm" by "upper arm" (`word_fix` function)
 		# - capitalizing when beginning a sentence
 		instructions[p] = re.sub("\s\s+", " ", instructions[p])
-		instructions[p] = instructions[p].replace("upperarm", "upper arm")
+		instructions[p] = word_fix(instructions[p])
+		if determiner != "your": 
+			instructions[p] = instructions[p].replace(' your ', f' {determiner} ')
 		instructions[p] = '. '.join(x.capitalize() for x in instructions[p].split('. '))
 
 	if verbose: 

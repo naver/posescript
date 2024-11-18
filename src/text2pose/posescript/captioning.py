@@ -1,6 +1,6 @@
 ##############################################################
 ## PoseScript                                               ##
-## Copyright (c) 2022, 2023                                 ##
+## Copyright (c) 2022, 2023, 2024                           ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
 ## and Naver Corporation                                    ##
 ## Licensed under the CC BY-NC-SA 4.0 license.              ##
@@ -37,6 +37,7 @@ from text2pose.posescript.utils import *
 POSECODE_INTERPRETATION_SET = flatten_list([p["category_names"] for p in POSECODE_OPERATORS_VALUES.values()])
 sp_POSECODE_INTERPRETATION_SET = [v[1][1] for v in SUPER_POSECODES if v[1][1] not in POSECODE_INTERPRETATION_SET]
 POSECODE_INTERPRETATION_SET += list_remove_duplicate_preserve_order(sp_POSECODE_INTERPRETATION_SET)
+POSECODE_INTERPRETATION_SET += ['touch'] # for contact codes
 POSECODE_INTPTT_NAME2ID = {intptt_name:i for i, intptt_name in enumerate(POSECODE_INTERPRETATION_SET)}
 
 # Data to reverse subjects & select template sentences
@@ -47,13 +48,26 @@ OK_FOR_1CMPNT_OR_2CMPNTS_IDS = [POSECODE_INTPTT_NAME2ID[n] for n in OK_FOR_1CMPN
 ## MAIN
 ################################################################################
 
-def main(coords, save_dir=None, babel_info=False, simplified_captions=False,
+def main(coords, joint_rotations_type="smplh", joint_rotations=None, shape_data=None,
+        load_contact_codes_file=None,
+        save_dir=None, babel_info=False, simplified_captions=False,
         apply_transrel_ripple_effect=True, apply_stat_ripple_effect=True,
-        random_skip=True, verbose=True):
+        random_skip=True, verbose=True, ret_type="dict"):
+    """
+        coords: shape (nb_poses, nb_joints, 3)
+        joint_rotations: shape (nb_poses, nb_joints, 3)
+        shape_data: None | tensor of shape (nb_poses, nb_shape_coefficients)
+        load_contact_codes_file: (path to file, boolean) where the boolean tells
+            whether to load the contact codes from file.
+            Note: useful to compute contact codes only once (more efficient), if
+            generating several captions.
+        
+    NOTE: expected joints: (global_orient, body_pose, optional:left_hand_pose, optional:right_hand_pose)
+    """
 
     # Select & complete joint coordinates (prosthesis phalanxes, virtual joints)
     if verbose: print("Formating input...")
-    coords = prepare_input(coords)
+    coords, joint_rotations = prepare_input(coords, joint_rotations)
 
     # Prepare posecode queries
     # (hold all info about posecodes, essentially using ids)
@@ -62,7 +76,7 @@ def main(coords, save_dir=None, babel_info=False, simplified_captions=False,
 
     # Eval & interprete & elect eligible elementary posecodes
     if verbose: print("Eval & interprete & elect eligible posecodes...")
-    p_interpretations, p_eligibility = infer_posecodes(coords, p_queries, sp_queries, verbose=verbose)
+    p_interpretations, p_eligibility = infer_posecodes(coords, p_queries, sp_queries, joint_rotations=joint_rotations, verbose=verbose)
     # save
     if save_dir:
         saved_filepath = os.path.join(save_dir, "posecodes_intptt_eligibility.pt")
@@ -77,6 +91,26 @@ def main(coords, save_dir=None, babel_info=False, simplified_captions=False,
                                                             sp_queries,
                                                             random_skip,
                                                             verbose = verbose)
+    
+    # Add contact posecodes if possible
+    if joint_rotations is not None:
+        if verbose: print("Adding contact posecodes...")
+        if load_contact_codes_file[1]:
+            posecodes_contact = torch.load(load_contact_codes_file[0])
+            print("Load data temporarily from", load_contact_codes_file[0])
+        else:
+            # since contact posecodes are added at this stage, they won't be skipped in
+            # any ways (which is OK, because contact information is rare and important)
+            from text2pose.posescript.format_contact_info import from_joint_rotations_to_contact_list
+            posecodes_contact = from_joint_rotations_to_contact_list(joint_rotations,
+                                                                    joint_rotations_type,
+                                                                    shape_data=shape_data,
+                                                                    intptt_id=POSECODE_INTPTT_NAME2ID['touch'])
+            torch.save(posecodes_contact, load_contact_codes_file[0])
+            print("Saving data temporarily at", load_contact_codes_file[0])
+
+        posecodes = add_contact_posecodes(posecodes, posecodes_contact)
+
     # save
     if save_dir:
         saved_filepath = os.path.join(save_dir, "posecodes_formated.pt")
@@ -115,7 +149,8 @@ def main(coords, save_dir=None, babel_info=False, simplified_captions=False,
             descriptions[i] = babel_info[i] + descriptions[i]
         if verbose: print(f"Added {added_babel_sent} new sentences using information extracted from BABEL.")
 
-    descriptions = {i:descriptions[i] for i in range(len(descriptions))}
+    if ret_type=="dict":
+        descriptions = {i:descriptions[i] for i in range(len(descriptions))}
     
     # save
     if save_dir:
@@ -206,6 +241,11 @@ def prepare_posecode_queries():
             "offset": offset,
         }
         offset += len(POSECODE_OPERATORS_VALUES[posecode_kind]['category_names']) # works because category names are all unique for elementary posecodes
+
+    # assert all intepretations are unique for elementary posecodes
+    interpretation_set = flatten_list([p["category_names"] for p in POSECODE_OPERATORS_VALUES.values()])
+    assert len(set(interpretation_set)) == len(interpretation_set), "Each elementary posecode interpretation name must be unique (category names in POSECODE_OPERATORS_VALUES)."
+
     return posecode_queries
 
 
@@ -273,7 +313,7 @@ def prepare_super_posecode_queries(p_queries):
 ## INFER POSECODES
 ################################################################################
 
-def infer_posecodes(coords, p_queries, sp_queries, verbose = True):
+def infer_posecodes(coords, p_queries, sp_queries, joint_rotations = None, verbose = True):
     
     # init
     nb_poses = len(coords)
@@ -282,7 +322,7 @@ def infer_posecodes(coords, p_queries, sp_queries, verbose = True):
 
     for p_kind, p_operator in POSECODE_OPERATORS.items():
         # evaluate posecodes
-        val = p_operator.eval(p_queries[p_kind]["joint_ids"], coords)
+        val = p_operator.eval(p_queries[p_kind]["joint_ids"], coords if p_operator.input_kind=="coords" else joint_rotations)
         # to represent a bit human subjectivity, slightly randomize the
         # thresholds, or, more conveniently, simply randomize a bit the
         # evaluations: add or subtract up to the maximum authorized random
@@ -520,7 +560,7 @@ def get_posecode_name(p_ind, p_kind, p_queries):
     else: # different sides
         sbp = f' - {side_2}{body_part_2}' if body_part_2 else ''
         tick_text = f'{side_1}{body_part_1}{sbp}'
-    return tick_text.replace("upperarm", "upper arm")
+    return word_fix(tick_text)
 
 
 def get_posecode_from_name(p_name):
@@ -565,7 +605,7 @@ def get_symmetric_posecode(p):
     if "L/R" in p:
         # just get opposite interpretation
         intptt = re.search(r'\((.*?)\)',p).group(1)
-        p = p.replace(intptt, OPPOSITE_CORRESP[intptt])
+        p = p.replace(intptt, OPPOSITE_CORRESP.get(intptt, intptt))
     else:
         # get symmetric (also works for p="---")
         p = p.replace("L", "$").replace("R", "L").replace("$", "R")
@@ -654,7 +694,7 @@ def posecode_intptt_scatter(p_kind, p_interpretations, p_queries,
         save_filepath = os.path.join(save_dir, save_fig)
         plt.savefig(save_filepath, dpi=300, bbox_inches='tight')
         print("Saved figure:", save_filepath)
-    plt.show()
+    # plt.show()
 
 
 ################################################################################
@@ -664,15 +704,36 @@ def posecode_intptt_scatter(p_kind, p_interpretations, p_queries,
 def quick_posecode_display(p):
     if p: return p[:2]+[POSECODE_INTERPRETATION_SET[p[2]]]+p[3:]
 
-def same_posecode_family(pA, pB):
+def same_posecode_order_family(pA, pB):
     # check if posecodes pA and pB have similar or opposite interpretations
-    return pA[2] == pB[2] or (OPPOSITE_CORRESP_ID.get(pB[2], False) and pA[2] == OPPOSITE_CORRESP_ID[pB[2]])
+    # returns False if the interpretation does not reflect a relation of order
+    pB_opposite = OPPOSITE_CORRESP_ID.get(pB[2], False)
+    # Note: pb_opposite is an ID, which could be 0, and thus count as "False",
+    # hence checking for the integer type below
+    return (type(pB_opposite) is int) and (pA[2]==pB[2] or pA[2]==pB_opposite)
 
 def reverse_joint_order(pA):
     # the first joint becomes the second joint (and vice versa), the
-    # interpretation is converted to its opposite
+    # interpretation is converted to its opposite (or stay the same if it has no
+    # opposite; ie. if this does not define a relation of order)
     # (assumes that pA is of size 5)
-    return pA[3:] + [OPPOSITE_CORRESP_ID[pA[2]]] + pA[:2]
+    return pA[3:] + [OPPOSITE_CORRESP_ID.get(pA[2], pA[2])] + pA[:2]
+
+def add_contact_posecodes(posecodes, posecodes_contact):
+    # as contact is a special case of distance posecode, remove any related
+    # close distance posecode if there is actual contact
+    for i in range(len(posecodes)): # iterate over poses
+        for pcc in posecodes_contact[i]: # iterate over contact posecodes
+            # create the equivalent distance posecode
+            equivalent_dist_pc = pcc[:2] + [POSECODE_INTPTT_NAME2ID['close']] + pcc[3:]
+            # remove it, if possible
+            try:
+                posecodes[i].remove(equivalent_dist_pc)
+            except ValueError:
+                pass
+    # finally add contact posecodes to regular posecodes
+    posecodes = [posecodes[i]+posecodes_contact[i] for i in range(len(posecodes))]
+    return posecodes
 
 def aggregate_posecodes(posecodes, simplified_captions=False,
                         apply_transrel_ripple_effect=True, apply_stat_ripple_effect=True,
@@ -718,28 +779,37 @@ def aggregate_posecodes(posecodes, simplified_captions=False,
                                 tuple(pB[:2]), tuple(pB[3:]),
                                 tuple(pC[:2]), tuple(pC[3:])])
                         if len(s) == 3 and tuple([None, None]) not in s and \
-                            same_posecode_family(pA, pB) and same_posecode_family(pB, pC):
+                            same_posecode_order_family(pA, pB) and same_posecode_order_family(pB, pC):
                             transrel_rer_removed +=1 # one posecode will be removed
-                            # keep pA as is
-                            # convert pB such that the interpretation is the same as pA
+                            # pA-normalize posecodes: ensure the body parts are
+                            # ordered to satisfy the same relation as in pA
                             pB_prime = pB if pB[2] == pA[2] else reverse_joint_order(pB)
-                            if pA[:2] == pB_prime[3:]:
-                                # then pB_prime[:2] < pA[:2] = pB_prime[3:] < pA[3:]
-                                updated_posecodes.remove(pC)
-                                if extra_verbose: print("Removed (ripple effect):", pC)
-                            else:
-                                # convert pC such that the interpretation is the same as pA
-                                pC_prime = pC if pC[2] == pA[2] else reverse_joint_order(pC)
-                                if pB_prime[3:] == pC_prime[:2]:
-                                    # then pA[3:] == pC_prime[3:], which means that
-                                    # pB_prime[:2] = pA[:2] < pB_prime[3:] = pC_prime[:2] < pA[3:] = pC_prime[3:]
-                                    updated_posecodes.remove(pA)
-                                    if extra_verbose: print("Removed (ripple effect):", pA)
-                                else:
-                                    # then pA[:2] == pC_prime[:2], which means that
-                                    # pB_prime[:2] = pA[:2] < pA[3:] = pC_prime[:2] < pB_prime[3:] = pC_prime[3:]
-                                    updated_posecodes.remove(pB)
-                                    if extra_verbose: print("Removed (ripple effect):", pB)
+                            pC_prime = pC if pC[2] == pA[2] else reverse_joint_order(pC)
+                            # For posecodes denoting a < b; b < c and a < c, the
+                            # redundant posecode is a < c; it is the "outer
+                            # posecode", with its left hand side (ie. x, in x<y)
+                            # appearing twice as a left hand side when
+                            # considering all 3 posecodes (ie. here x=a); and
+                            # its right hand side (y in x<y) appearing twice as
+                            # a right hand side within the group (ie. here,
+                            # y=c). Let's find x and y for the outer posecode:
+                            x = [pA[:2], pB_prime[:2], pC_prime[:2]]
+                            x = x[0] if x[0] in x[1:] else x[1]
+                            y = [pA[3:], pB_prime[3:], pC_prime[3:]]
+                            y = y[0] if y[0] in y[1:] else y[1]
+                            # Let's recover the outer posecode
+                            p_outer = x + [pA[2]] + y # pA-normalized!
+                            # Let's remove the outer posecode
+                            try:
+                                updated_posecodes.remove(p_outer)
+                                if extra_verbose: print("Removed (ripple effect):", p_outer)
+                            except ValueError:
+                                # p_outer was not present in the list in its
+                                # pA-normalized version; let's reverse it
+                                # first then remove it
+                                p_outer = reverse_joint_order(p_outer)
+                                updated_posecodes.remove(p_outer)
+                                if extra_verbose: print("Removed (ripple effect):", p_outer)
                         # Example:
                         # "the left hand is above the neck, the right hand is
                         # below the neck, the left hand is above the right
@@ -787,6 +857,14 @@ def aggregate_posecodes(posecodes, simplified_captions=False,
                     #     below the right elbow" ==> "the left arm is below the right arm"
                     # c) [CASE IN WHICH AGGREGATION DOES NOT HAPPEN, SO NO POSECODE SHOULD BE REMOVED]
                     #    "the right knee is bent, the right elbow is bent"
+
+			# NOTE: due to entity aggregations representing inclusions (eg. the
+			# L toes touch the R foot + the L foot touch the R foot ==> the L
+			# foot touches the R foot); and some codes (eg. contact codes) which
+			# can be redundant, the entity-based aggregation rule may end up
+			# duplicating existing codes. Ensure code unicity:
+            updated_posecodes = set([tuple(l) for l in updated_posecodes]) # ensure unicity
+            updated_posecodes = [list(l) for l in list(updated_posecodes)] # convert back to list
 
 
         #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -856,9 +934,7 @@ def aggregate_posecodes(posecodes, simplified_captions=False,
             # Swap the first & second joints when they only differ about their
             # side; and adapt the interpretation.
             if pc[1] == pc[4] and pc[0] != pc[3] and random.random() < 0.5:
-                pc[:2], pc[3:5] = pc[3:5], pc[:2]
-                pc[2] = OPPOSITE_CORRESP_ID[pc[2]]
-                updated_posecodes[i_pc] = pc
+                updated_posecodes[i_pc] = reverse_joint_order(pc)
             # Randomly process two same body parts as a single body part if
             # allowed by the corresponding posecode interpretation (ie. randomly
             # choose between 1-component and 2-component template sentences, eg.
@@ -944,9 +1020,9 @@ def omit_for_flow(bp1, verb, intptt_name, bp2, bp1_initial):
     description piece to be produced for the sake of flow."""
     # remove the second body part in description when it is not necessary and it
     # simply makes the description more cumbersome
-    if bp2 is None: bp2 = '' # temporary, to ease code reading (reset to None at the end)
+    if bp2 is None: bp2 = '' # temporary, to make testing operations easier (reset to None at the end)
     # hands/feet are compared to the torso to know whether they are in the back
-    if 'torso' in bp2 and intptt_name not in ['close']: bp2 = ''
+    if 'torso' in bp2 and intptt_name in ['behind', 'front']: bp2 = ''
     # hands are compared to their respective shoulder to know whether they are
     # out of line
     if 'hand' in bp1_initial and 'shoulder' in bp2 and intptt_name in ['at_right', 'at_left']: bp2 = ''
@@ -970,8 +1046,30 @@ def insert_verb(d, v):
         return d
 
 
-def posecode_to_text(bp1, verb, intptt_id, bp2, bp1_initial, simplified_captions=False):
-    """ Stitch the involved body parts and the interpretation into a sentence.
+def get_special_transition(body_part, verb, bp1_initial, determiner):
+    """
+    Args:
+        body_part: the computational name of the body part; to be distinguished
+            from the value output by the function `side_body_part_to_text`.
+        bp1_initial: the output or the function `side_body_part_to_text`.
+    """
+    if body_part == 'body' and 'body' not in bp1_initial:
+        # the subject is in fact the person, not the body (note that the latter
+        # could be refered to with the word 'it')
+        return f". {DETERMINER_2_SUBJECT[determiner].capitalize()} " # eg. She/He/They
+    if verb=='are':
+        # account for a first body part that is plural (eg. the hands)
+        return ". They "
+    if body_part == "head":
+        # case where no special transition is allowed; eg. because the body part
+        # name is not to be plugged in the template sentences: the template
+        # sentences already have the body part integrated in them.
+        return False
+    return ". It "
+
+
+def posecode_to_text(bp1, verb, intptt_id, bp2, bp1_initial, determiner, simplified_captions=False):
+    """Stitch the involved body parts and the interpretation into a sentence.
     Args:
         bp1 (string): text for the 1st body part & side.
         verb (string): verb info (singular/plural) to adapt description.
@@ -994,8 +1092,18 @@ def posecode_to_text(bp1, verb, intptt_id, bp2, bp1_initial, simplified_captions
     # Eventually fill in the blanks of the template sentence for the posecode
     if bp2 is None:
         # there is not a second body part involved
-        d = random.choice(ENHANCE_TEXT_1CMPNT[intptt_name])
-        d = d.format(bp1)
+        # --- special case
+        if 'head' in bp1_initial and intptt_name in SPECIFIC_INTPTT_HEAD_ROTATION.keys():
+            adapted_intptt_name = SPECIFIC_INTPTT_HEAD_ROTATION[intptt_name]
+            d_ = random.choice(ENHANCE_TEXT_1CMPNT[adapted_intptt_name])
+            d = d_.format(determiner=determiner, subject=DETERMINER_2_SUBJECT[determiner])
+            if '{subject}' in d_ and DETERMINER_2_SUBJECT[determiner] == "they" \
+                and verb != NO_VERB_KEY:
+                verb = 'are'
+        # --- regular case
+        else:
+            d = random.choice(ENHANCE_TEXT_1CMPNT[intptt_name])
+            d = d.format(bp1)
     else:
         d = random.choice(ENHANCE_TEXT_2CMPNTS[intptt_name])
         d = d.format(bp1, bp2)
@@ -1061,13 +1169,15 @@ def convert_posecodes(posecodes, simplified_captions=False, verbose=True):
                 # and link them together
                 d = ""
                 bp1 = bp1_initial
-                special_trans = ". They " if verb=="are" else ". It " # account for a first body part that is plural (eg. the hands)
+                special_trans = get_special_transition(pc[1][1], verb, bp1_initial, determiner) # this functions requires the name of the body part used for computation, not just the one used to fill template sentences (which would be `bp1_initial`)
+                # ^ eg. ". They ", ". It ", ...
                 for intptt_id, bp2 in zip(pc[2], bp2s):
                     d += posecode_to_text(bp1, verb, intptt_id, bp2, bp1_initial,
-                                        simplified_captions=simplified_captions)
+                                          determiner, simplified_captions=simplified_captions)
                     # choose the next value for bp1 (transition text)
-                    if bp1 != " and ":
-                        choices = [" and "+NO_VERB_KEY, special_trans, ", "+NO_VERB_KEY]
+                    if (bp1 != " and ") or (not special_trans):
+                        choices = [" and "+NO_VERB_KEY, ", "+NO_VERB_KEY]
+                        if special_trans: choices += [special_trans]
                         if NO_VERB_KEY not in bp1: choices += [" and "] 
                         bp1 = random.choice(choices)
                     else:
@@ -1091,7 +1201,7 @@ def convert_posecodes(posecodes, simplified_captions=False, verbose=True):
 
                 # Create the piece of description corresponding to the posecode
                 d = posecode_to_text(bp1_initial, verb, pc[2], bp2, bp1_initial,
-                                        simplified_captions=simplified_captions)
+                                     determiner, simplified_captions=simplified_captions)
             
             # Concatenation to the current description
             descriptions[p] += transitions[i_pc] + d
@@ -1100,11 +1210,11 @@ def convert_posecodes(posecodes, simplified_captions=False, verbose=True):
         
         # Correct syntax (post-processing)
         # - removing wide spaces,
-        # - replacing "upperarm" by "upper arm"
+        # - replacing eg. "upperarm" by "upper arm" (`word_fix` function)
         # - randomly replacing all "their"/"them" by "his/him" or "her/her" depending on the chosen determiner
         # - capitalizing when beginning a sentence
         descriptions[p] = re.sub("\s\s+", " ", descriptions[p])
-        descriptions[p] = descriptions[p].replace("upperarm", "upper arm")
+        descriptions[p] = word_fix(descriptions[p])
         descriptions[p] = '. '.join(x.capitalize() for x in descriptions[p].split('. '))
         if determiner in ["his", "her"]:
             # NOTE: do not replace "they" by "he/she" as "they" can sometimes
@@ -1243,12 +1353,12 @@ if __name__ == "__main__" :
         t1 = time.time()
         print(f"Considering {len(coords)} poses.")
         _ = main(coords,
-                save_dir = save_dir,
+                save_dir=save_dir,
                 babel_info=pose_babel_text,
                 simplified_captions=args.simplified_captions,
-                apply_transrel_ripple_effect = args.apply_transrel_ripple_effect,
-                apply_stat_ripple_effect = args.apply_stat_ripple_effect,
-                random_skip = args.random_skip)
+                apply_transrel_ripple_effect=args.apply_transrel_ripple_effect,
+                apply_stat_ripple_effect=args.apply_stat_ripple_effect,
+                random_skip=args.random_skip)
         with open(os.path.join(save_dir, "args.txt"), 'w') as f:
             f.write(args.__repr__())
         print(f"Process took {time.time() - t1} seconds.")

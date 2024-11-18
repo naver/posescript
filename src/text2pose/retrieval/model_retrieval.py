@@ -10,6 +10,7 @@
 import torch
 from torch import nn
 
+import text2pose.config as config
 from text2pose.encoders.tokenizers import Tokenizer, get_text_encoder_or_decoder_module_name, get_tokenizer_name
 from text2pose.encoders.pose_encoder_decoder import PoseEncoder
 from text2pose.encoders.text_encoders import TextEncoder, TransformerTextEncoder
@@ -17,13 +18,18 @@ from text2pose.encoders.text_encoders import TextEncoder, TransformerTextEncoder
 
 class PoseText(nn.Module):
     def __init__(self, num_neurons=512, num_neurons_mini=32, latentD=512,
+                 num_body_joints=config.NB_INPUT_JOINTS,
                  text_encoder_name='distilbertUncased', transformer_topping=None):
         super(PoseText, self).__init__()
 
         self.latentD = latentD
 
         # Define pose encoder
-        self.pose_encoder = PoseEncoder(num_neurons, num_neurons_mini, latentD=latentD, role="retrieval")
+        self.pose_encoder = PoseEncoder(num_neurons=num_neurons,
+                                        num_neurons_mini=num_neurons_mini,
+                                        latentD=latentD,
+                                        num_body_joints=num_body_joints,
+                                        role="retrieval")
 
         # Define text encoder
         self.text_encoder_name = text_encoder_name

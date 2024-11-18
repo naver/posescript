@@ -1,6 +1,6 @@
 ##############################################################
 ## PoseScript                                               ##
-## Copyright (c) 2022, 2023                                 ##
+## Copyright (c) 2022, 2023, 2024                           ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
 ## and Naver Corporation                                    ##
 ## Licensed under the CC BY-NC-SA 4.0 license.              ##
@@ -120,7 +120,7 @@ SINGULAR_KEY = '<singular>'
 ## PREPARE INPUT
 ################################################################################
 
-def prepare_input(coords):
+def prepare_input(coords, joint_rotations=None):
     """
     Select coordinates for joints of interest, and complete thems with the
     coordinates of virtual joints. If coordinates are provided for the main 22
@@ -131,6 +131,8 @@ def prepare_input(coords):
         coords (torch.tensor): size (nb of poses, nb of joints, 3), coordinates
             of the different joints, for several poses; with joints being all
             of those defined in ALL_JOINT_NAMES or just the first 22 joints.
+        joint_rotations (torch.tensor): size (nb of poses, nb of joints, 3), 
+            relative rotations of the different joints, for several poses
     
     Returns:
         (torch.tensor): size (nb of poses, nb of joints, 3), coordinates
@@ -173,7 +175,12 @@ def prepare_input(coords):
                 ]
     added_j = [aj.view(-1, 1, 3) for aj in added_j]
     coords = torch.cat([coords] + added_j, axis=1) # concatenate along the joint axis
-    return coords
+    ### check joint rotations, if any
+    if joint_rotations is not None:
+        if joint_rotations.shape[-1] != 3:
+            joint_rotations = joint_rotations.view(len(joint_rotations), -1, 3)
+        assert joint_rotations.shape[1] in [22, 52], "Currently, the codes expects the joint rotations to be given for (global_orient, body_pose, optional:left_hand_pose, optional:right_hand_pose), in this order."
+    return coords, joint_rotations
 
 
 def compute_wrist_middle2ndphalanx_distance(coords):
@@ -253,13 +260,21 @@ def normalize_to_singular(body_part):
 
 
 # From simple body parts to larger entities (assume side-preservation)
+# This also makes it possible to deal with inclusion:
+# eg. wrist in contact with X + hand in contact with X ==> hand in contact with X
 ENTITY_AGGREGATION = {
-    ('wrist', 'elbow'):'arm',
-    ('hand', 'elbow'):'arm',
-    ('ankle', 'knee'):'leg',
-    ('foot', 'knee'):'leg',
-    ('forearm', 'upperarm'):'arm',
-    ('calf', 'thigh'):'leg'}
+        ('wrist', 'elbow'): 'arm',
+        ('hand', 'elbow'): 'arm',
+        ('ankle', 'knee'): 'leg',
+        ('foot', 'knee'): 'leg',
+        ('forearm', 'upperarm'): 'arm',
+        ('shin', 'thigh'): 'leg',
+        ('lowerleg', 'thigh'): 'leg',
+        ('upperback', 'lowerback'): 'back',
+        ('belly', 'chest'): 'torso',
+        ('index', 'wrist'): 'hand',
+        ('toes', 'ankle'): 'foot',
+    }
 # make it possible to query in any order
 d = {(b,a):c for (a,b),c in ENTITY_AGGREGATION.items()}
 ENTITY_AGGREGATION.update(d)
@@ -363,15 +378,34 @@ def aggreg_fbp_intptt_based(codes_1p, PROP_aggregation_happens=1, extra_verbose=
     return updated_codes
 
 
+# define kinematic orders ('%s' is aimed to be replaced by 'left' or 'right')
+# --> any change to a body part X that is ordered before a body part Y is
+# susceptible to bring a change to body part Y; (accounts for entities)
+kinematic_side_upper = ['body', 'torso', '%s_arm', '%s_shoulder', '%s_upperarm', '%s_elbow', '%s_forearm', '%s_wrist', '%s_hand', '%s_index']
+kinematic_side_lower = ['body', 'torso', '%s_leg', '%s_hip', '%s_thigh', '%s_knee', '%s_lowerleg', '%s_shin', '%s_ankle', '%s_foot', '%s_toes']
+# NOTE: not including subparts of the torso here (these are essentially referred
+# to for contact anyway)
+
+
 ################################################################################
 ## CODE ORDERING
 ################################################################################
 
 # Locally rank body parts by kinematic relevance, so the final instruction does
 # not seem desultory
-kinematic_edges = [('body', 'head'), ('body', 'torso'), ('torso', 'chest'), ('torso', 'waist')]
-for s in ['left_', 'right_']: 
-    kinematic_edges += [('torso', f'{s}shoulder'), ('torso', f'{s}arm'), (f'{s}arm', f'{s}upperarm'), (f'{s}arm', f'{s}forearm'), (f'{s}upperarm', f'{s}elbow'), (f'{s}upperarm', f'{s}shoulder'), (f'{s}forearm', f'{s}elbow'), (f'{s}forearm', f'{s}hand'), ('torso', f'{s}hip'), ('torso', f'{s}leg'), (f'{s}leg', f'{s}thigh'), (f'{s}leg', f'{s}calf'), (f'{s}thigh', f'{s}hip'), (f'{s}thigh', f'{s}knee'), (f'{s}calf', f'{s}knee'), (f'{s}calf', f'{s}foot')]
+
+# Define kinematic graph edges (using body parts at stake)
+# (root)
+kinematic_edges = [('body', 'head'), ('body', 'torso')]
+# (torso)
+kinematic_edges += [('torso', 'left_torso'), ('torso', 'right_torso'), ('torso', 'chest'), ('torso', 'belly'), ('torso', 'crotch'), ('torso', 'upperback'), ('torso', 'lowerback'), ('torso', 'butt'), ('torso', 'back')]
+# (head)
+kinematic_edges += [('head', 'throat'), ('head', 'neck'), ('head', 'crown'), ('head', 'face')]
+for s in ['left_', 'right_']:
+    # (upper limbs)
+    kinematic_edges += [('torso', f'{s}shoulder'), ('torso', f'{s}arm'), (f'{s}arm', f'{s}upperarm'), (f'{s}arm', f'{s}forearm'), (f'{s}upperarm', f'{s}elbow'), (f'{s}upperarm', f'{s}shoulder'), (f'{s}forearm', f'{s}elbow'), (f'{s}forearm', f'{s}hand'), (f'{s}hand', f'{s}wrist'), (f'{s}hand', f'{s}index')]
+    # (lower limbs)
+    kinematic_edges += [('torso', f'{s}hip'), ('crotch', f'{s}leg'), ('torso', f'{s}leg'), (f'{s}leg', f'{s}thigh'), (f'{s}leg', f'{s}shin'), (f'{s}leg', f'{s}lowerleg'), (f'{s}thigh', f'{s}hip'), (f'{s}thigh', f'{s}knee'), (f'{s}shin', f'{s}knee'), (f'{s}shin', f'{s}foot'), (f'{s}lowerleg', f'{s}knee'), (f'{s}lowerleg', f'{s}foot'), (f'{s}foot', f'{s}ankle'), (f'{s}foot', f'{s}toes')]
 
 
 def get_new_bp_relevance_ranking():
@@ -463,10 +497,11 @@ def order_codes(codes):
 # Specific plural rules
 PLURALIZE = {
     "foot":"feet",
-    "calf":"calves"
+    "toes":"toes", # always considered as a group... NOTE (unsatisfactory case): the pipeline may produce sentences like "make both toes touch" to mean "make both right and left toes touch"
 }
 SINGULARIZE = {v:k for k,v in PLURALIZE.items()}
 
+# TODO: possibly automatize verb form changes using the lemminflect library
 
 def verb_to_gerund_tense(v):
     if f'<{v}>' in SHOULD_VERBS:
@@ -484,7 +519,7 @@ def verb_to_present_tense(v, third_person=False):
     third_person: whether to conjugate the verb at the 3rd person
     """
     if third_person:
-        if v in ["do", "reach"]:
+        if v in ["do", "reach", "touch"]:
             return v + "es"
         if f'<{v}>' in SHOULD_VERBS:
             if "need" in v:
@@ -494,6 +529,20 @@ def verb_to_present_tense(v, third_person=False):
             return v
         return v + "s"
     return v
+
+
+SPLIT_WORDS = {
+    "upperarm": "upper arm",
+    "lowerleg": "lower leg",
+    "upperback": "upper back",
+    "lowerback": "lower back",
+}
+
+
+def word_fix(txt):
+    for fw, sw in SPLIT_WORDS.items():
+        txt = txt.replace(fw, sw)
+    return txt
 
 
 ################################################################################

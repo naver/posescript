@@ -2,20 +2,21 @@ import torch
 import torch.nn as nn
 import numpy as np
 
+import text2pose.config as config
 from text2pose.encoders.tokenizers import Tokenizer, get_text_encoder_or_decoder_module_name, get_tokenizer_name
 from text2pose.encoders.pose_encoder_decoder import PoseDecoder, PoseEncoder
 from text2pose.encoders.text_encoders import TextEncoder, TransformerTextEncoder
 
 class CondTextPoser(nn.Module):
 
-    def __init__(self, num_neurons=512, latentD=32, text_encoder_name='distilbertUncased', transformer_topping=None):
+    def __init__(self, num_neurons=512, latentD=32, num_body_joints=config.NB_INPUT_JOINTS, text_encoder_name='distilbertUncased', transformer_topping=None):
         super(CondTextPoser, self).__init__()
 
         self.latentD = latentD
 
         # Define pose auto-encoder
-        self.pose_encoder = PoseEncoder(num_neurons, latentD=latentD, role="generative")
-        self.pose_decoder = PoseDecoder(num_neurons, latentD)
+        self.pose_encoder = PoseEncoder(num_neurons=num_neurons, latentD=latentD, num_body_joints=num_body_joints, role="generative")
+        self.pose_decoder = PoseDecoder(num_neurons=num_neurons, latentD=latentD, num_body_joints=num_body_joints)
 
         # Define text encoder
         self.text_encoder_name = text_encoder_name

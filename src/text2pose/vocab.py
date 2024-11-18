@@ -1,7 +1,7 @@
 import os
 import argparse
 from collections import Counter
-import nltk
+# import nltk # moved to a place where it is required for sure
 import pickle
 
 import text2pose.config as config
@@ -112,6 +112,7 @@ def update_vocab(texts, vocab, threshold=0):
     Returns:
         (Vocabulary)
     """
+    import nltk
     init_size = len(vocab)
 
     counter = Counter()

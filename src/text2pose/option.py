@@ -32,6 +32,7 @@ def get_args_parser():
 
     # model architecture
     parser.add_argument('--model', default='CondTextPoser', choices=("PoseText", "PairText", "CondTextPoser", "PoseBGenerator", "DescriptionGenerator", "FeedbackGenerator"), help='name of the model')
+    parser.add_argument('--num_body_joints', default=config.NB_INPUT_JOINTS, type=int, help="Number of body joints to consider as input/output to the model.")
     parser.add_argument('--text_encoder_name', default='glovebigru_vocPSA2H2', help='name of the text encoder (should not have any "_" symbol in it; when needed, auxiliary vocab reference (as in config.vocab_files) must be attached to the actual text encoder name after a "_" character')
     parser.add_argument('--text_decoder_name', default='transformer_vocPFAH', help='name of the text decoder (should not have any "_" symbol in it; when needed, auxiliary vocab reference (as in config.vocab_files) must be attached to the actual text decoder name after a "_" character')
     parser.add_argument('--transformer_topping', help='method for obtaining the sentence embedding (transformer-based text encoders)') # "avgp", "augtokens"
@@ -98,7 +99,8 @@ def get_output_dir(args):
     add_flag = lambda t, a: t if a else '' # `t` may have a symbol '_' at the beginning or at the end
 
     # define strings to provide details about different aspects of the model (architecture, training)
-    architecture_details = f'{args.model}_textencoder-{args.text_encoder_name}' + \
+    architecture_details = args.model + add_flag(f'_{args.num_body_joints}bodyjts', args.num_body_joints!=52) + \
+        f'_textencoder-{args.text_encoder_name}' + \
         add_flag(f'-{args.transformer_topping}', args.text_encoder_name.split("_")[0] not in ["glovebigru"]) + \
         f"_latentD{args.latentD}"
     
@@ -133,7 +135,8 @@ def get_output_dir(args):
 
     # specific to the pose-to-text generation model
     elif args.model == "DescriptionGenerator":
-        architecture_details = f'{args.model}_textdecoder-{args.text_decoder_name}' + \
+        architecture_details = args.model + add_flag(f'_{args.num_body_joints}bodyjts', args.num_body_joints!=52) + \
+            f'_textdecoder-{args.text_decoder_name}' + \
             add_flag(f'_mode-{args.transformer_mode}', args.transformer_mode!="crossattention") + \
             add_flag(f'_dlatentD{args.decoder_latentD}', args.decoder_latentD!=768) + \
             add_flag(f'_dnhead{args.decoder_nhead}', args.decoder_nhead!=4) + \
@@ -144,7 +147,8 @@ def get_output_dir(args):
 
     # specific to the pose-pair-to-text generation model
     elif args.model == "FeedbackGenerator":
-        architecture_details = f'{args.model}_textdecoder-{args.text_decoder_name}' + \
+        architecture_details = args.model + add_flag(f'_{args.num_body_joints}bodyjts', args.num_body_joints!=52) + \
+            f'_textdecoder-{args.text_decoder_name}' + \
             add_flag(f'_mode-{args.transformer_mode}', args.transformer_mode!="crossattention") + \
             f'_{args.comparison_module_mode}' + \
             add_flag(f'-clatentD{args.comparison_latentD}', args.comparison_latentD!=args.latentD) + \

@@ -43,8 +43,10 @@ file_posefix_split = f"{POSEFIX_LOCATION}/%s_%s_sequence_pair_ids.json" # %s %s 
 POSE_FORMAT = 'smplh'
 SMPLH_BODY_MODEL_PATH = MAIN_DIR + '/data/smplh_amass_body_models'
 NEUTRAL_BM = f'{SMPLH_BODY_MODEL_PATH}/neutral/model.npz'
-NB_INPUT_JOINTS = 52
+NB_INPUT_JOINTS = 52 # default value used when initializing modules, unless specified otherwise
 n_betas = 16
+
+SMPLX_BODY_MODEL_PATH = MAIN_DIR + '/data/smpl_models' # should contain "smplx/SMPLX_NEUTRAL.(npz|pkl)"
 
 PID_NAN = -99999 # pose fake IDs, used for empty poses
 
@@ -99,6 +101,7 @@ cache_file_path = {
 
 GLOVE_DIR = MAIN_DIR + '/tools/torch_models/glove' # or None
 TRANSFORMER_CACHE_DIR = MAIN_DIR + '/tools/huggingface_models'
+SELFCONTACT_ESSENTIALS_DIR = MAIN_DIR + '/tools/selfcontact/essentials'
 
 
 ################################################################################
@@ -120,7 +123,8 @@ try:
         shortname_2_model_path = [l.split("    ") for l in f.readlines() if len(l.strip())]
         shortname_2_model_path = {l[0]:normalize_model_path(l[1].strip(), '{seed}') for l in shortname_2_model_path}
 except FileNotFoundError:
-    print("File not found: shortname_2_model_path.txt - Please ensure you are launching operations from the right directory.")
+    # print("File not found: shortname_2_model_path.txt - Please ensure you are launching operations from the right directory.")
+    pass # this file may not even be needed; subsequent errors can be expected otherwise
 
 
 ################################################################################
@@ -134,6 +138,7 @@ nb_sample_reconstruction = 30
 k_topk_reconstruction_values = [1, 6] # keep the top-1 and the top-N/4 where N is the nb_sample_reconstruction
 k_topk_r_precision = [1,2,3]
 r_precision_n_repetitions = 10
+sample_size_r_precision = 32
 
 
 ################################################################################

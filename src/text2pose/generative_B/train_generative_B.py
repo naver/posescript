@@ -49,15 +49,15 @@ class PoseEditingTrainer(GenericTrainer):
 		data_size = self.args.data_size if split=="train" else None
 
 		if "posefix" in self.args.dataset:
-			d = PoseFix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, data_size=data_size)
+			d = PoseFix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=self.args.num_body_joints, data_size=data_size)
 		elif "posemix" in self.args.dataset:
 			# NOTE: if specifying data_size: only the first loaded data items
 			# will be considered (since PoseFix is loaded before PoseScript, if
 			# data_size < the size of PoseFix, no PoseScript data will be
 			# loaded)
-			d = PoseMix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, data_size=data_size)
+			d = PoseMix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=self.args.num_body_joints, data_size=data_size)
 		elif "posescript" in self.args.dataset:
-			d = PoseScript(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, data_size=data_size, posefix_format=True)
+			d = PoseScript(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=self.args.num_body_joints, data_size=data_size, posefix_format=True)
 		else:
 			raise NotImplementedError
 		return d
@@ -67,7 +67,7 @@ class PoseEditingTrainer(GenericTrainer):
 		super().init_dataloaders()
 		if self.args.pose_stream:
 			print('Load auxiliary training dataset (pose stream)')
-			dataset_posestream_train = PoseStream(split='train')
+			dataset_posestream_train = PoseStream(split='train', num_body_joints=self.args.num_body_joints)
 			print(dataset_posestream_train, len(dataset_posestream_train))
 			self.data_loader_posestream_train = torch.utils.data.DataLoader(
 				dataset_posestream_train, sampler=None, shuffle=True,
@@ -83,6 +83,7 @@ class PoseEditingTrainer(GenericTrainer):
 		self.model = PoseBGenerator(text_encoder_name=self.args.text_encoder_name,
 							transformer_topping=self.args.transformer_topping,
 							latentD=self.args.latentD,
+							num_body_joints=self.args.num_body_joints,
 							special_text_latentD=self.args.special_text_latentD,
 							correction_module_mode=self.args.correction_module_mode)
 		self.model.to(self.device)
@@ -103,7 +104,7 @@ class PoseEditingTrainer(GenericTrainer):
 	def init_other_training_elements(self):
 		self.init_fid(name_in_batch="poses_B")
 		self.init_body_model()
-		self.data_augmentation_module = DataAugmentation(self.args, mode="posefix", tokenizer_name=get_tokenizer_name(self.args.text_encoder_name))
+		self.data_augmentation_module = DataAugmentation(self.args, mode="posefix", tokenizer_name=get_tokenizer_name(self.args.text_encoder_name), nb_joints=self.args.num_body_joints)
 
 
 	def training_epoch(self, epoch):
@@ -122,7 +123,7 @@ class PoseEditingTrainer(GenericTrainer):
 	
 
 	def validation_epoch(self, epoch):
-		if (epoch+1)%self.args.val_every==0: # and lr_scheduler is None
+		if self.args.val_every and (epoch+1)%self.args.val_every==0: # and lr_scheduler is None
 			return self.one_epoch(
 							epoch=epoch,
 							is_training=False

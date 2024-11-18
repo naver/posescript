@@ -6,10 +6,11 @@ git+https://github.com/MPI-IS/configer.git
 git+https://github.com/MPI-IS/mesh.git
 git+https://github.com/nghorbani/human_body_prior.git
 
-torch==1.10.1+cu102
+torch==1.10.1
 torchtext==0.11.1
 torchvision==0.11.2
 nltk
+smplx
 matplotlib
 opencv-python
 transformers

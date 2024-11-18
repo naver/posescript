@@ -8,7 +8,7 @@
 ##############################################################
 
 import os
-import nltk
+# import nltk # moved to a place where it is required for sure
 import torch
 import random
 from copy import deepcopy
@@ -103,6 +103,7 @@ def Tokenizer(text_encoder_or_decoder_name):
 	if tokenizer_name in ["distilbertUncased", "clip"]:
 		return TransformTokenizer(tokenizer_name)
 	elif "voc" in tokenizer_name:
+		import nltk # only needed if using this kind of tokenizer
 		return BaseTokenizer(tokenizer_name)
 	else:
 		raise NotImplementedError
@@ -517,8 +518,8 @@ class TransformTokenizer(GenericTokenizer):
 		# ==> rather use __call__
 		return self.__call__(token)[1:-1].tolist() # remove BOS/EOS
 
-	def decode(self, token_ids):
-		t = self.tokenizer.decode(token_ids, skip_special_tokens=True) # convert token ids into words, remove BOS & ENS tokens
+	def decode(self, token_ids, skip_special_tokens=True):
+		t = self.tokenizer.decode(token_ids, skip_special_tokens=skip_special_tokens) # convert token ids into words, remove BOS & ENS tokens
 		if not self.cased_tokenizer:
 			return self.polish_decode(". ".join([p[0].upper() + p[1:] for p in t.split(". ")])) # use capital letters at the beginning of sentences
 		return self.polish_decode(t)

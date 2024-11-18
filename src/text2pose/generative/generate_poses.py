@@ -53,9 +53,9 @@ for s in splits:
     filepath = save_path.format(data_version=dataset_version, split=s)
     assert not os.path.isfile(filepath), "Poses already generated!"
 
-    d = PoseScript(version=dataset_version, split=s, tokenizer_name=tokenizer_name)
+    d = PoseScript(version=dataset_version, split=s, tokenizer_name=tokenizer_name, num_body_joints=model.pose_decoder.num_body_joints)
     ncaptions = config.caption_files[dataset_version][0]
-    output = torch.empty( (len(d), ncaptions, args.n_generate, model.pose_decoder.num_joints, 3), dtype=torch.float32)
+    output = torch.empty( (len(d), ncaptions, args.n_generate, model.pose_decoder.num_body_joints, 3), dtype=torch.float32)
     
     for index in tqdm(range(len(d))):
         # look at each available caption in turn

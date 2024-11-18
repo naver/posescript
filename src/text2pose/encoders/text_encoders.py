@@ -140,7 +140,7 @@ class TransformerTextEncoder(nn.Module):
             txt_enc_last_dim = self.pretrained_text_encoder.config.hidden_size
 
         # learnable projection
-        embed_dim = {"retrieval": latentD, "generative": num_neurons, "modifier": latentD}[role]
+        embed_dim = {"retrieval": latentD, "generative": num_neurons, "modifier": latentD, None: latentD}[role] # default is latentD
         self.projection = nn.Sequential(nn.ReLU(),
                                         nn.Linear(txt_enc_last_dim, embed_dim))
 
@@ -154,7 +154,7 @@ class TransformerTextEncoder(nn.Module):
         self.transformer_encoder = nn.TransformerEncoder(transformer_encoder_layers, nlayers)
 
         # define a way to represent the whole sequence from its token embeddings
-        self.output_layer = None
+        self.output_layer = nn.Sequential() # default
         # - use average pooling
         if topping == "avgp":
             self.forward_topping = self.topping_avgp
@@ -173,8 +173,7 @@ class TransformerTextEncoder(nn.Module):
 
         if role == "retrieval":
             self.output_layer = L2Norm()
-        elif role == "modifier":
-            self.output_layer = nn.Sequential()
+
 
     def init_weights(self, word2idx, wemb):
         # Get word embeddings + keep track of missing words
@@ -235,7 +234,7 @@ class TransformerTextEncoder(nn.Module):
         elif self.role == "generative":
             return self.output_layer(output[0], output[1].exp().pow(0.5))
 
-    def forward(self, captions, caption_lengths):
+    def forward(self, captions, caption_lengths, return_attn_masks=False):
         attention_mask = self.get_attention_mask(captions, caption_lengths)
         # embed tokens
         if self.using_pretrained_transformer:
@@ -244,7 +243,10 @@ class TransformerTextEncoder(nn.Module):
             token_embeddings = self.embed_sequential(captions)
         token_embeddings = self.projection(token_embeddings) # (batch_size, nbtokens, latentID)
         # apply transformer & topping
-        return self.forward_topping(token_embeddings, attention_mask)
+        ret = self.forward_topping(token_embeddings, attention_mask)
+        if return_attn_masks:
+            return ret, attention_mask
+        return ret
 
 
 class CLIPTextEncoder(nn.Module):

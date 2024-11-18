@@ -111,12 +111,11 @@ def get_pose_data_from_file(pose_info, applied_rotation=None, output_rotation=Fa
 	return pose.reshape(1, -1)
 
 
-def pose_data_as_dict(pose_data):
+def pose_data_as_dict(pose_data, code_base='human_body_prior'):
 	"""
 	Args:
 		pose_data, torch.tensor of shape (*, n_joints*3) or (*, n_joints, 3),
 			all joints considered.
-
 	Returns:
 		dict
 	"""
@@ -124,7 +123,19 @@ def pose_data_as_dict(pose_data):
 	if len(pose_data.shape) == 3:
 		# shape (batch_size, n_joints, 3)
 		pose_data = pose_data.flatten(1,2)
-	# provide as a dict, with the expected keys
-	return {"root_orient":pose_data[:,:3],
-			"pose_body":pose_data[:,3:66],
-			"pose_hand":pose_data[:,66:]}
+	if len(pose_data.shape) == 2 and pose_data.shape[1] == 3:
+		# shape (n_joints, 3)
+		pose_data = pose_data.view(1, -1)
+	# provide as a dict, with different keys, depending on the code base
+	if code_base == 'human_body_prior':
+		d = {"root_orient":pose_data[:,:3],
+	   		 "pose_body":pose_data[:,3:66]}
+		if pose_data.shape[1] > 66:
+			d["pose_hand"] = pose_data[:,66:]
+	elif code_base == 'smplx':
+		d = {"global_orient":pose_data[:,:3],
+	   		 "body_pose":pose_data[:,3:66]}
+		if pose_data.shape[1] > 66:
+			d.update({"left_hand_pose":pose_data[:,66:111],
+					"right_hand_pose":pose_data[:,111:]})
+	return d

@@ -34,9 +34,14 @@ def load_model(model_path, device):
 	text_encoder_name = ckpt['args'].text_encoder_name
 	transformer_topping = ckpt['args'].transformer_topping
 	latentD = ckpt['args'].latentD
+	num_body_joints = getattr(ckpt['args'], 'num_body_joints', 52)
 	
 	# load model
-	model = PairText(text_encoder_name=text_encoder_name, transformer_topping=transformer_topping, latentD=latentD).to(device)
+	model = PairText(text_encoder_name=text_encoder_name,
+				  	 transformer_topping=transformer_topping,
+					 latentD=latentD,
+					 num_body_joints=num_body_joints
+					 ).to(device)
 	model.load_state_dict(ckpt['model'])
 	model.eval()
 	print(f"Loaded model from (epoch {ckpt['epoch']}):", model_path)
@@ -62,7 +67,10 @@ def eval_model(model_path, dataset_version, split='val'):
 	for cap_ind in range(nb_caps):
 		filename_res = get_res_file(cap_ind)
 		if not os.path.isfile(filename_res) or OVERWRITE_RESULT:
-			d = PoseFix(version=dataset_version, split=split, tokenizer_name=tokenizer_name, caption_index=cap_ind, cache=True)
+			if "posefix" in dataset_version:
+				d = PoseFix(version=dataset_version, split=split, tokenizer_name=tokenizer_name, caption_index=cap_ind, num_body_joints=model.pose_encoder.num_body_joints, cache=True)
+			else:
+				raise NotImplementedError
 			cap_results = compute_eval_metrics(model, d, device)
 			evaluate.save_results_to_file(cap_results, filename_res)
 		else:

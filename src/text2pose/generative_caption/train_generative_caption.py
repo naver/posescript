@@ -42,9 +42,9 @@ class DescriptionGenerationTrainer(GenericTrainer):
 		data_size = self.args.data_size if split=="train" else None
 
 		if "posescript" in self.args.dataset:
-			d = PoseScript(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, data_size=data_size)
+			d = PoseScript(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=self.args.num_body_joints, data_size=data_size)
 		elif "posefix" in self.args.dataset:
-			d = PoseFix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, data_size=data_size, posescript_format=True)
+			d = PoseFix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=self.args.num_body_joints, data_size=data_size, posescript_format=True)
 		else:
 			raise NotImplementedError
 		return d
@@ -54,6 +54,7 @@ class DescriptionGenerationTrainer(GenericTrainer):
 		print('Load model')
 		self.model = DescriptionGenerator(text_decoder_name=self.args.text_decoder_name,
 									encoder_latentD=self.args.latentD,
+									num_body_joints=self.args.num_body_joints,
 									decoder_latentD=self.args.decoder_latentD,
 									decoder_nhead=self.args.decoder_nhead,
 									decoder_nlayers=self.args.decoder_nlayers,
@@ -81,7 +82,7 @@ class DescriptionGenerationTrainer(GenericTrainer):
 
 
 	def init_other_training_elements(self):
-		self.data_augmentation_module = DataAugmentation(self.args, mode="posescript", tokenizer_name=get_tokenizer_name(self.args.text_decoder_name))
+		self.data_augmentation_module = DataAugmentation(self.args, mode="posescript", tokenizer_name=get_tokenizer_name(self.args.text_decoder_name), nb_joints=self.args.num_body_joints)
 
 
 	def training_epoch(self, epoch):
@@ -91,9 +92,9 @@ class DescriptionGenerationTrainer(GenericTrainer):
 
 	def validation_epoch(self, epoch):
 		val_stats = {}
-		if (epoch+1)%self.args.val_every==0:
+		if self.args.val_every and (epoch+1)%self.args.val_every==0:
 			val_stats.update(self.one_epoch(epoch=epoch, is_training=False))
-		if (epoch+1)%(self.args.val_every*10)==0:
+		if self.args.val_every and (epoch+1)%(self.args.val_every*10)==0:
 			val_stats.update(self.validate(epoch=epoch))
 		return val_stats
 	

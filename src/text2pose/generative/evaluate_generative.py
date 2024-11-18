@@ -36,9 +36,14 @@ def load_model(model_path, device):
 	text_encoder_name = ckpt['args'].text_encoder_name
 	transformer_topping = getattr(ckpt['args'], 'transformer_topping', None)
 	latentD = ckpt['args'].latentD
+	num_body_joints = getattr(ckpt['args'], 'num_body_joints', 52)
 	
 	# load model
-	model = CondTextPoser(text_encoder_name=text_encoder_name, transformer_topping=transformer_topping, latentD=latentD).to(device)
+	model = CondTextPoser(text_encoder_name=text_encoder_name,
+					   	  transformer_topping=transformer_topping,
+						  latentD=latentD,
+						  num_body_joints=num_body_joints
+						  ).to(device)
 	model.load_state_dict(ckpt['model'])
 	model.eval()
 	print(f"Loaded model from (epoch {ckpt['epoch']}):", model_path)
@@ -68,7 +73,7 @@ def eval_model(model_path, dataset_version, fid_version, split='val'):
 	for cap_ind in range(nb_caps):
 		filename_res = get_res_file(cap_ind)
 		if not os.path.isfile(filename_res) or OVERWRITE_RESULT:
-			d = PoseScript(version=dataset_version, split=split, tokenizer_name=tokenizer_name, caption_index=cap_ind, cache=True)
+			d = PoseScript(version=dataset_version, split=split, tokenizer_name=tokenizer_name, caption_index=cap_ind, num_body_joints=model.pose_encoder.num_body_joints, cache=True)
 			cap_results = compute_eval_metrics(model, d, fid_version, device)
 			evaluate.save_results_to_file(cap_results, filename_res)
 		else:
@@ -134,7 +139,7 @@ def compute_eval_metrics(model, dataset, fid_version, device):
 	# normalize the elbo (the same is done earlier for the reconstruction metrics)
 	pose_metrics.update({'v2v_elbo':pose_metrics['v2v_elbo']/(body_model.J_regressor.shape[1] * 3),
 						'jts_elbo':pose_metrics['jts_elbo']/(body_model.J_regressor.shape[0] * 3),
-						'rot_elbo':pose_metrics['rot_elbo']/(model.pose_decoder.num_joints * 9)})
+						'rot_elbo':pose_metrics['rot_elbo']/(model.pose_decoder.num_body_joints * 9)})
 
 	# compute fid metric
 	results = {'fid': fid.compute()}

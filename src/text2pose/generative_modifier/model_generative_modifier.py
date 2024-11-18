@@ -9,6 +9,7 @@
 
 import torch.nn as nn
 
+import text2pose.config as config
 from text2pose.encoders.tokenizers import get_text_encoder_or_decoder_module_name
 from text2pose.encoders.modules import TIRG
 from text2pose.encoders.pose_encoder_decoder import PoseEncoder
@@ -18,12 +19,13 @@ from text2pose.encoders.text_decoders import TransformerTextDecoder, ModalityInp
 class FeedbackGenerator(nn.Module):
 
 	def __init__(self, num_neurons=512, encoder_latentD=32, comparison_latentD=32,
+					num_body_joints=config.NB_INPUT_JOINTS,
 			  		decoder_latentD=512, decoder_nhead=8, decoder_nlayers=4, text_decoder_name="",
 					comparison_module_mode="tirg", transformer_mode="crossattention"):
 		super(FeedbackGenerator, self).__init__()
 
 		# Define pose encoder
-		self.pose_encoder = PoseEncoder(num_neurons, latentD=encoder_latentD, role="retrieval")
+		self.pose_encoder = PoseEncoder(num_neurons=num_neurons, latentD=encoder_latentD, num_body_joints=num_body_joints, role="retrieval")
 
 		# Define fusing module
 		self.comparison_module = ComparisonModule(inlatentD=encoder_latentD,

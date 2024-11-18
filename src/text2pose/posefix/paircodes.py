@@ -1,6 +1,6 @@
 ##############################################################
 ## PoseFix                                                  ##
-## Copyright (c) 2023                                       ##
+## Copyright (c) 2023, 2024                                 ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
 ## and Naver Corporation                                    ##
 ## Licensed under the CC BY-NC-SA 4.0 license.              ##
@@ -11,7 +11,7 @@ import torch
 import numpy as np
 import math
 
-from text2pose.posescript.posecodes import PosecodeAngle, PosecodeDistance
+from text2pose.posescript.posecodes import PosecodeAngle, PosecodeDistance, PosecodeBodyIncline, PosecodeRelativeRot
 from text2pose.posefix.corrective_data import PAIRCODE_OPERATORS_VALUES, PAIR_GLOBAL_ROT_CHANGE # ADD_PAIRCODE_KIND
 
 # Classes:
@@ -19,6 +19,8 @@ from text2pose.posefix.corrective_data import PAIRCODE_OPERATORS_VALUES, PAIR_GL
 # * PaircodeAngle
 # * PaircodeDistance
 # * PaircodeRelativePos (to initialize with 0, 1 or 2 depending on the axis to study)
+# * PaircodeBodyIncline (to initialize with 0, 1 or 2 depending on the axis to study)
+# * PaircodeRelativeRot (currently only dealing with axis 0 and 1)
 # cf. # ADD_PAIRCODE_KIND
 
 
@@ -58,9 +60,11 @@ class Paircode:
     """
 
     def __init__(self):
+        # define input data for paircode evaluation
+        self.input_kind = "coords" # (coords|rotations) # default to coords
         # define interpretable categories (list)
         self.category_names = None
-        # thresholds to fall into each categories
+        # thresholds to fall into each categories, in increasing order of value
         # (list of size len(self.category_names)-1)
         self.category_thresholds = None
         # maximum random offset that can be added or substracted from the
@@ -169,6 +173,7 @@ class Paircode:
             candidate = np.where(classification == pc)[0]
             if len(candidate) == 0:
                 print(f"No pose pair corresponding (joints ids: {joint_ids} ; interpretation: '{self.category_names[pc]}').")
+                ret.append([])
                 continue
             print(f"Number of corresponding pose pairs for '{self.category_names[pc]}': {len(candidate)}.")
             if nb_select is None:
@@ -186,6 +191,7 @@ class Paircode:
 class PaircodeAngle(Paircode):
 
     def __init__(self):
+        super().__init__()
         self.fill_attributes(PAIRCODE_OPERATORS_VALUES['pair_angle'])
         self.posecodeAngle = PosecodeAngle()
 
@@ -219,6 +225,7 @@ class PaircodeAngle(Paircode):
 class PaircodeDistance(Paircode):
 
     def __init__(self):
+        super().__init__()
         self.fill_attributes(PAIRCODE_OPERATORS_VALUES['pair_distance'])
         self.posecodeDistance = PosecodeDistance()
 
@@ -261,6 +268,7 @@ class PaircodeRelativePos(Paircode):
     """
 
     def __init__(self, axis):
+        super().__init__()
         pov = PAIRCODE_OPERATORS_VALUES[['pair_relativePosX', 'pair_relativePosY', 'pair_relativePosZ'][axis]]
         self.fill_attributes(pov)
         self.axis = axis
@@ -290,6 +298,7 @@ class PaircodeRelativePos(Paircode):
 class PaircodeRootRotation(Paircode):
 
     def __init__(self, root_rotations, axis=1):
+        super().__init__()
         self.fill_attributes(PAIR_GLOBAL_ROT_CHANGE)
         self.val = root_rotations[:,axis]
         # torch tensor of size (nb of pose pairs, 3) giving the rotation angle
@@ -306,6 +315,96 @@ class PaircodeRootRotation(Paircode):
         return intptt
 
 
+class PaircodeBodyIncline(Paircode):
+
+    def __init__(self, axis):
+        super().__init__()
+        pov = PAIRCODE_OPERATORS_VALUES[['pair_bodyInclineX', 'pair_bodyInclineY', 'pair_bodyInclineZ'][axis]]
+        self.fill_attributes(pov)
+        self.axis = axis
+        self.posecodeBodyIncline = PosecodeBodyIncline(axis)
+
+    def eval(self, pair_ids, joint_ids, joint_coords):
+        """Evaluate the paircode for each pose pair.
+
+        Args:
+            pair_ids (torch.tensor): size (nb of pose pairs, 2), indices of the
+                pose pairs to study.
+            joint_ids (torch.tensor): size (1 5), ids to the following joints:
+                [left_shoulder, right_shoulder, pelvis, left_ankle, right_ankle]
+            joint_coords (torch.tensor): size (nb of poses, nb of joints, 3),
+                coordinates of the different joints, for several poses.
+
+        Returns:
+            (torch.tensor): size (nb of pairs, 1), value of the paircode for
+                each pose pair. Yields angle values in degrees.
+        """
+        # get the upper-body angle for each pose
+        body_angles = self.posecodeBodyIncline.eval(joint_ids, joint_coords)
+        # compute the difference within pose pairs
+        angle_evol = body_angles[pair_ids[:,0]] - body_angles[pair_ids[:,1]]
+        
+        if self.axis == 0:
+            # NOTE: if one of the two poses is a lying-down or handstand pose,
+            # its angle was artificially set to 0. Using the angle difference
+            # could distort the results; let's ignore such pairs.
+            # -- find poses that do not have the ankles below their "neck"
+            # (approximated as the middle point between the shoulders)
+            lsj, rsj, pj, laj, raj = joint_ids[0]
+            middle_shoulder_line = (joint_coords[:,lsj] + joint_coords[:,rsj])/2
+            minimum_ankle_height = torch.stack((joint_coords[:,laj,1], joint_coords[:,raj,1]), dim=1).min(1).values
+            pose_condition = minimum_ankle_height < (middle_shoulder_line[:,1] - self.posecodeBodyIncline.threshold_ankle_below_neck)
+            pose_condition = ~pose_condition
+            # -- find pairs for which at least one pose fulfills that condition
+            pair_condition = torch.logical_or(pose_condition[pair_ids[:,0]], pose_condition[pair_ids[:,1]])
+            # -- artificially set the angle difference to 0 for these pairs
+            angle_evol[pair_condition] = 0 
+        
+        return angle_evol
+
+
+class PaircodeRelativeRot(Paircode):
+
+    def __init__(self, axis):
+        super().__init__()
+        assert axis in [0,1]
+        self.input_kind = "rotations" # (coords|rotations)
+        pov = PAIRCODE_OPERATORS_VALUES[['pair_relativeRotX', 'pair_relativeRotY'][axis]]
+        self.fill_attributes(pov)
+        self.axis = axis
+        self.posecodeRelativeRot = PosecodeRelativeRot(axis)
+
+    def eval(self, pair_ids, joint_ids, joint_rotations):
+        """Evaluate the paircode for each of the provided joint sets and each
+        pose pair.
+
+        Args:
+            pair_ids (torch.tensor): size (nb of pose pairs, 2), indices of the
+                pose pairs to study.
+            joint_ids (torch.tensor): size (nb of joint sets, 2), ids of the
+                joints to study. For each joint set, the paircode studies
+                the rotation of the first joint relatively to the second
+                joint (along the axis defined at the class level), and how this
+                angle has evolved between the two poses.
+                NOTE: the second joint has to be a parent of the first joint!
+            joint_rotations (torch.tensor): size (nb of poses, 22 or 52, 3),
+                relative rotation of the different joints, for several poses,
+                in axis-angle representation (basically the SMPL pose representation).
+                NOTE: the joint rotations should follow:
+                (global_orient, body_pose, optional:left_hand_pose, optional:right_hand_pose)
+
+        Returns:
+            (torch.tensor): size (nb of pairs, nb of joint sets), value of the
+                paircode for each joint set and each pose pair. Yields angle
+                values in degrees.
+        """
+        # get the angle for each pose
+        relative_rotation = self.posecodeRelativeRot.eval(joint_ids, joint_rotations)
+        # compute the difference within pose pairs
+        return relative_rotation[pair_ids[:,0]] - relative_rotation[pair_ids[:,1]]
+
+
+
 ## PAIRCODE OPERATORS
 ################################################################################
 
@@ -317,6 +416,11 @@ PAIRCODE_OPERATORS = {
     "pair_relativePosX": PaircodeRelativePos(0),
     "pair_relativePosY": PaircodeRelativePos(1),
     "pair_relativePosZ": PaircodeRelativePos(2),
+    "pair_bodyInclineX": PaircodeBodyIncline(0),
+    "pair_bodyInclineY": PaircodeBodyIncline(1),
+    "pair_bodyInclineZ": PaircodeBodyIncline(2),
+    "pair_relativeRotX": PaircodeRelativeRot(0),
+    "pair_relativeRotY": PaircodeRelativeRot(1),
 }
 # NOTE: PaircodeRootRotation is missing here, as it is a particular type of
 # paircode, which uses a different kind of computation;

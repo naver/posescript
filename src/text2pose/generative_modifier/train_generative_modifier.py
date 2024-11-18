@@ -42,13 +42,13 @@ class ModifierGenerationTrainer(GenericTrainer):
 		data_size = self.args.data_size if split=="train" else None
 
 		if "posefix" in self.args.dataset:
-			d = PoseFix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, data_size=data_size)
+			d = PoseFix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=self.args.num_body_joints, data_size=data_size)
 		elif "posemix" in self.args.dataset:
 			# NOTE: if specifying data_size: only the first loaded data items
 			# will be considered (since PoseFix is loaded before PoseScript, if
 			# data_size < the size of PoseFix, no PoseScript data will be
 			# loaded)
-			d = PoseMix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, data_size=data_size)
+			d = PoseMix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=self.args.num_body_joints, data_size=data_size)
 		else:
 			raise NotImplementedError
 		return d
@@ -63,7 +63,8 @@ class ModifierGenerationTrainer(GenericTrainer):
 								decoder_nhead=self.args.decoder_nhead,
 								decoder_nlayers=self.args.decoder_nlayers,
 								comparison_module_mode=self.args.comparison_module_mode,
-								transformer_mode=self.args.transformer_mode)
+								transformer_mode=self.args.transformer_mode,
+								num_body_joints=self.args.num_body_joints)
 		self.model.to(self.device)
 
 		# load pretrained weights for the pose encoder
@@ -88,7 +89,7 @@ class ModifierGenerationTrainer(GenericTrainer):
 
 
 	def init_other_training_elements(self):
-		self.data_augmentation_module = DataAugmentation(self.args, mode="posefix", tokenizer_name=get_tokenizer_name(self.args.text_decoder_name))
+		self.data_augmentation_module = DataAugmentation(self.args, mode="posefix", tokenizer_name=get_tokenizer_name(self.args.text_decoder_name), nb_joints=self.args.num_body_joints)
 
 
 	def training_epoch(self, epoch):
@@ -98,9 +99,9 @@ class ModifierGenerationTrainer(GenericTrainer):
 
 	def validation_epoch(self, epoch):
 		val_stats = {}
-		if (epoch+1)%self.args.val_every==0:
+		if self.args.val_every and (epoch+1)%self.args.val_every==0:
 			val_stats.update(self.one_epoch(epoch=epoch, is_training=False))
-		if (epoch+1)%(self.args.val_every*10)==0:
+		if self.args.val_every and (epoch+1)%(self.args.val_every*10)==0:
 			val_stats.update(self.validate(epoch=epoch))
 		return val_stats
 	

@@ -90,7 +90,7 @@ To generate automatic captions, please follow these steps:
 	| N6      | `python posescript/captioning.py --version_name captions_n6 --random_skip --add_babel_info --add_dancing_info` |
 	| N7      | `python posescript/captioning.py --version_name captions_n7 --random_skip --apply_transrel_ripple_effect --apply_stat_ripple_effect` |
 
-	*Note that some posecodes were added since, for the release of PoseFix.*
+	*Note that some posecodes were added since, for the release of PoseFix and PoseEmbroider.*
 	</details>
 
 	<details>
@@ -105,7 +105,7 @@ To generate automatic captions, please follow these steps:
 	| E       | `python posescript/captioning.py --version_name captions_E --random_skip --simplified_captions` |
 	| F       | `python posescript/captioning.py --version_name captions_F --simplified_captions` |
 
-	*Note that some posecodes were added since, for the release of PoseFix.*
+	*Note that some posecodes were added since, for the release of PoseFix and PoseEmbroider.*
 	</details>
 
 

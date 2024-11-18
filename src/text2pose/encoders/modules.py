@@ -34,11 +34,12 @@ class DiffModule(nn.Module):
 
 class AddModule(nn.Module):
 
-	def __init__(self):
+	def __init__(self, axis=0):
 		super(AddModule, self).__init__()
+		self.axis = axis
 
 	def forward(self, x):
-		return x[1] + x[0]
+		return x.sum(self.axis)
 
 
 class SeqModule(nn.Module):

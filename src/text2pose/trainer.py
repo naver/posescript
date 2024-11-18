@@ -1,6 +1,6 @@
 ##############################################################
 ## text2pose                                                ##
-## Copyright (c) 2022, 2023                                 ##
+## Copyright (c) 2022, 2023, 2024                           ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
 ## and Naver Corporation                                    ##
 ## Licensed under the CC BY-NC-SA 4.0 license.              ##
@@ -32,12 +32,15 @@ from text2pose.fid import FID
 
 class GenericTrainer():
 
-	def __init__(self, args):
+	def __init__(self, args, retrieval_trainer=False):
 		super(GenericTrainer, self).__init__()
 
 		# define setting
 		self.args = args
 		self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+		self.retrieval_trainer = retrieval_trainer
+		self.the_higher_the_better = retrieval_trainer # NOTE: default, general case, but not systematic!
+		self.best_score_metric_name = 'mRecall' if retrieval_trainer else 'val_loss'
 		cudnn.benchmark = True
 
 		# fix the seed for reproducibility
@@ -121,23 +124,39 @@ class GenericTrainer():
 			print("Resume training. Load weights from last checkpoint.")
 			ckpt = torch.load(self.ckpt_fname, 'cpu')
 			self.start_epoch = ckpt['epoch'] + 1
-			self.best_val_loss = ckpt.get('best_val_loss', float('inf'))
+			if self.retrieval_trainer:
+				self.best_score = ckpt.get('best_score', 0.0 if self.the_higher_the_better else float('inf')) # init
+			else:
+				self.best_val_loss = ckpt.get('best_val_loss', float('inf'))
 			self.model.load_state_dict(ckpt['model'])
 			self.optimizer.load_state_dict(ckpt['optimizer'])
+			if self.lr_scheduler:
+				self.lr_scheduler.load_state_dict(ckpt['scheduler'])
 		else:
 			self.start_epoch = 0
-			self.best_val_loss = float('inf')
+			if self.retrieval_trainer:
+				self.best_score = 0.0 if self.the_higher_the_better else float('inf') # init
+			else:
+				self.best_val_loss = float('inf')
 			if self.args.pretrained: # load pretrained weights
 				pretrained_path = (config.shortname_2_model_path[self.args.pretrained]).format(seed=self.args.seed)
 				print(f'Loading pretrained model: {pretrained_path}')
 				ckpt = torch.load(pretrained_path, 'cpu')
+				assert self.args.num_body_joints == getattr(ckpt['args'], 'num_body_joints', 52), "Pose-related modules in the initialized model and the pretrained model use a different number of joints."
 				self.model.load_state_dict(ckpt['model'])
 
 
 	def has_model_improved(self, val_stats):
-		if val_stats and val_stats['val_loss'] < self.best_val_loss:
-			self.best_val_loss = val_stats['val_loss']
-			return True
+		if self.retrieval_trainer:
+			if val_stats:
+				if (val_stats[self.best_score_metric_name] > self.best_score and self.the_higher_the_better) or \
+					(val_stats[self.best_score_metric_name] < self.best_score and not self.the_higher_the_better):
+					self.best_score = val_stats[self.best_score_metric_name]
+					return True
+		else:
+			if val_stats and val_stats[self.best_score_metric_name] < self.best_val_loss:
+				self.best_val_loss = val_stats[self.best_score_metric_name]
+				return True
 		return False
 	
 
@@ -145,8 +164,12 @@ class GenericTrainer():
 		tosave = {'epoch': epoch,
 				'model': self.model.state_dict(),
 				'optimizer': self.optimizer.state_dict(),
-				'args': self.args,
-				'best_val_loss': self.best_val_loss}
+				'scheduler': self.lr_scheduler.state_dict() if self.lr_scheduler else None,
+				'args': self.args}
+		if self.retrieval_trainer:
+			tosave['best_score'] = self.best_score
+		else:
+			tosave['best_val_loss'] = self.best_val_loss
 		# overwrite the current checkpoint after each epoch
 		torch.save(tosave, self.ckpt_fname)
 		# overwrite the "best" checkpoint each time the model improves
@@ -189,6 +212,10 @@ class GenericTrainer():
 		self.optimizer = torch.optim.Adam(param_groups, lr=self.args.lr, weight_decay=self.args.wd)
 
 
+	def init_lr_scheduler(self):
+		self.lr_scheduler = None
+
+
 	# (other optional initializations) -----------------------------------------
 	# (to be added, if need be, in the overriden version of
 	# self.init_other_training_elements)
@@ -206,32 +233,53 @@ class GenericTrainer():
 	def init_fid(self, name_in_batch, seed=1):
 		# NOTE: default seed=1 for consistent evaluation
 		# prepare fid on the val set
-		print('Preparing FID')
-		self.fid = FID((self.args.fid, seed), device=self.device, name_in_batch=name_in_batch)
-		self.fid.extract_real_features(self.data_loader_val)
+		if self.args.fid:
+			print('Preparing FID.')
+			self.fid = FID((self.args.fid, seed), device=self.device, name_in_batch=name_in_batch)
+			self.fid.extract_real_features(self.data_loader_val)
+		else:
+			print('No feature extractor provided to compute the FID. Ignoring FID...')
 
 
 	# TRAINING PROCESS ---------------------------------------------------------
 
 
 	def print_trainable_params(self):
-		l = []
+		
+		optimized_params = self.get_param_groups() # list of dicts {'params':..., 'lr':...}
+		optimized_params = [v['params'] for v in optimized_params] # list of lists
+		optimized_params = [element for sublist in optimized_params for element in sublist] # single list
+		
+		requires_grad_params = [] # params whose gradient will be recorded
+		optimized_param_names = [] # params that will be optimized
 		for n, p in self.model.named_parameters():
 			if p.requires_grad == True:
-				l.append(n)
-		print("Trainable parameters:", l)
+				requires_grad_params.append(n)
+			for op in optimized_params:
+				if p is op:
+					optimized_param_names.append(n)
+					break
+		
+		# params that will be updated
+		requires_grad_params = set(requires_grad_params)
+		optimized_param_names = set(optimized_param_names)
+		print("Trainable parameters:", sorted(requires_grad_params.intersection(optimized_param_names)))
+		t = requires_grad_params.difference(optimized_param_names)
+		if t: print("### WARNING ### - the following parameters have requires_grad=True, but won't be optimized:", sorted(t))
+		t = optimized_param_names.difference(requires_grad_params)
+		if t: print("### WARNING ### - the following parameters will be 'optimized', but their gradient is not recorded:", sorted(t))
 
 
 	def add_data_to_log_writer(self, epoch, sstr, scalars=None, images=None, texts=None, is_training=None, data_iter_step=1, total_steps=1, should_log_data=None):
 		"""
 		Args:
-		    scalars: list of tuples (variable name, value) or
+			scalars: list of tuples (variable name, value) or
 					(variable name, dict{sub_variable_name:sub_variable_value})
 			images: tuple (variable name, number of examples, tensor of size BHWC)
 			texts: tuple (variable name, list of texts)
 			should_log_data: (None|True), use True to force log
 		"""
-		if hasattr(self, "log_writer"):
+		if self.log_writer is not None:
 			if should_log_data is None:
 				# compute condition for logging
 				should_log_data = (data_iter_step==total_steps-1) or data_iter_step%self.args.log_step==0
@@ -281,10 +329,11 @@ class GenericTrainer():
 		self.check_training_status()
 		
 		# initializations
-		self.init_dataloaders()
 		self.init_model()
 		self.init_optimizer()
-		self.init_other_training_elements()
+		self.init_lr_scheduler()
+		self.init_dataloaders()
+		self.init_other_training_elements() # needs to be last (depends on previous things)
 		
 		# load previous ckpt & log parameter names
 		self.start_or_resume_training()
@@ -292,7 +341,7 @@ class GenericTrainer():
 
 		# init tensorboard
 		self.log_writer = SummaryWriter(log_dir=self.args.output_dir)
-	
+
 		# start training process
 		start_time = time.time()
 		for epoch in range(self.start_epoch, self.args.epochs): 
@@ -308,7 +357,7 @@ class GenericTrainer():
 			save_best_model = self.has_model_improved(val_stats)
 			self.save_checkpoint(save_best_model, epoch)
 			# -- (tensorboard)
-			self.log_writer.flush()
+			if self.log_writer is not None: self.log_writer.flush()
 			# -- (regular logs)
 			log_stats = {'epoch': epoch, 'time':time.time(), 'lr': self.optimizer.param_groups[0]["lr"]}
 			log_stats.update(**train_stats)

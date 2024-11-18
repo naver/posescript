@@ -1,6 +1,6 @@
 ##############################################################
 ## PoseScript                                               ##
-## Copyright (c) 2022, 2023                                 ##
+## Copyright (c) 2022, 2023, 2024                           ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
 ## and Naver Corporation                                    ##
 ## Licensed under the CC BY-NC-SA 4.0 license.              ##
@@ -10,7 +10,9 @@
 import torch
 import numpy as np
 import math
+import roma
 
+import text2pose.utils as utils
 from text2pose.posescript.captioning_data import POSECODE_OPERATORS_VALUES # ADD_POSECODE_KIND
 
 # Classes:
@@ -20,6 +22,8 @@ from text2pose.posescript.captioning_data import POSECODE_OPERATORS_VALUES # ADD
 # - PosecodeRelativePos (to initialize with 0, 1 or 2 depending on the axis to study)
 # - PosecodeRelativeVAxis
 # - PosecodeOnGround
+# - PosecodeBodyIncline (to initialize with 0, 1 or 2 depending on the axis to study)
+# - PosecodeRelativeRot (to initialize with 0, 1 or 2 depending on the axis to study)
 # cf. # ADD_POSECODE_KIND
 
 
@@ -45,6 +49,18 @@ def distance_between_joint_pairs(joint_ids, joint_coords):
     return torch.linalg.norm(joint_coords[:,joint_ids[:,0],:] - joint_coords[:,joint_ids[:,1],:], axis=2)
 
 
+def project_on_2d_plane(p, plane_v):
+    """
+    Args:
+        p: point to project, shape (n_poses, 3)
+        plane_v: vector with True on the axes defining the plane, shape (1, 3)
+
+    Output:
+        tensor of shape (n_poses, 2)
+    """
+    return p[:, torch.arange(3)[plane_v]]
+
+
 deg2rad = lambda theta_deg : math.pi * theta_deg / 180.0
 rad2deg = lambda theta_rad : 180.0 * theta_rad / math.pi
 torch_cos2deg = lambda cos_tensor : rad2deg(torch.acos(cos_tensor))
@@ -53,12 +69,15 @@ torch_cos2deg = lambda cos_tensor : rad2deg(torch.acos(cos_tensor))
 class Posecode:
     """
     Generic posecode class.
+    In what follows, `joint_coords` could also refer to joint rotations.
     """
 
     def __init__(self):
+        # define input data for posecode evaluation
+        self.input_kind = "coords" # (coords|rotations) # default to coords
         # define interpretable categories (list)
         self.category_names = None
-        # thresholds to fall into each categories
+        # thresholds to fall into each categories, in increasing order of value
         # (list of size len(self.category_names)-1)
         self.category_thresholds = None
         # maximum random offset that can be added or substracted from the
@@ -163,6 +182,7 @@ class Posecode:
             candidate = np.where(classification == pc)[0]
             if len(candidate) == 0:
                 print(f"No pose corresponding (joints ids: {joint_ids} ; interpretation: '{self.category_names[pc]}').")
+                ret.append([])
                 continue
             print(f"Number of corresponding poses for '{self.category_names[pc]}': {len(candidate)}.")
             if nb_select is None:
@@ -180,6 +200,7 @@ class Posecode:
 class PosecodeAngle(Posecode):
 
     def __init__(self):
+        super().__init__()
         self.fill_attributes(POSECODE_OPERATORS_VALUES['angle'])
 
     def eval(self, joint_ids, joint_coords):
@@ -211,6 +232,7 @@ class PosecodeAngle(Posecode):
 class PosecodeDistance(Posecode):
 
     def __init__(self):
+        super().__init__()
         self.fill_attributes(POSECODE_OPERATORS_VALUES['distance'])
 
     def eval(self, joint_ids, joint_coords):
@@ -232,6 +254,7 @@ class PosecodeRelativePos(Posecode):
     """
 
     def __init__(self, axis):
+        super().__init__()
         pov = POSECODE_OPERATORS_VALUES[['relativePosX', 'relativePosY', 'relativePosZ'][axis]]
         self.fill_attributes(pov)
         self.axis = axis
@@ -258,6 +281,7 @@ class PosecodeRelativePos(Posecode):
 class PosecodeRelativeVAxis(Posecode):
 
     def __init__(self):
+        super().__init__()
         self.fill_attributes(POSECODE_OPERATORS_VALUES['relativeVAxis'])
         self.vertical_vec = torch.tensor([0.0, 1.0, 0.0])
 
@@ -290,6 +314,7 @@ class PosecodeRelativeVAxis(Posecode):
 class PosecodeOnGround(Posecode):
 
     def __init__(self):
+        super().__init__()
         self.fill_attributes(POSECODE_OPERATORS_VALUES['onGround'])
 
     def eval(self, joint_ids, joint_coords):
@@ -312,6 +337,198 @@ class PosecodeOnGround(Posecode):
         return joint_coords[:, joint_ids, 1].squeeze() - joint_coords[:,:,1].min(1)[0].view(-1,1)
 
 
+class PosecodeBodyIncline(Posecode):
+
+    def __init__(self, axis):
+        super().__init__()
+        pov = POSECODE_OPERATORS_VALUES[['bodyInclineX', 'bodyInclineY', 'bodyInclineZ'][axis]]
+        self.fill_attributes(pov)
+        self.axis = axis
+        self.threshold_ankle_below_neck = 0.2 # meters
+
+    def eval(self, joint_ids, joint_coords):
+        """Evaluate the posecode for each pose.
+
+        Args:
+            joint_ids (torch.tensor): size (1 5), ids to the following joints:
+                [left_shoulder, right_shoulder, pelvis, left_ankle, right_ankle]
+            joint_coords (torch.tensor): size (nb of poses, nb of joints, 3),
+                coordinates of the different joints, for several poses.
+
+        Returns:
+            (torch.tensor): size (nb of poses, 1), value of the posecode for
+                each pose.
+        
+        Why using the middle point between the shoulders instead of the neck?
+        Because we are basically looking at the inclination of the upper body,
+        essentially demarcated by the shoulder line.
+        """
+        # Notations:
+        # * s:shoulder, a:ankle, p:pelvis
+        # * l:left, r:right
+        # * j:joint, v:vector
+        assert joint_ids.shape == (1,5), "This is a special posecode, which expects a very specific jointset."
+        lsj, rsj, pj, laj, raj = joint_ids[0]
+
+        # Initialization:
+        # * unit vectors
+        x_unit = torch.tensor([1, 0, 0], dtype=torch.float)
+        y_unit = torch.tensor([0, 1, 0], dtype=torch.float)
+        z_unit = torch.tensor([0, 0, 1], dtype=torch.float)
+        # * planes
+        yz_plane = torch.tensor([0, 1, 1], dtype=torch.bool)
+        xz_plane = torch.tensor([1, 0, 1], dtype=torch.bool)
+        xy_plane = torch.tensor([1, 1, 0], dtype=torch.bool)
+
+        if self.axis == 0:
+            # (1) bent forward/backward (X)
+            # consists in looking at the angle between the upper body and the
+            # Y-unit vector in the YZ plane
+            # -- project the middle point of the shoulder line on the YZ plane
+            middle_shoulder_line = (joint_coords[:,lsj] + joint_coords[:,rsj])/2
+            proj_svmid_yz = project_on_2d_plane(middle_shoulder_line, yz_plane)
+            proj_pj_yz = project_on_2d_plane(joint_coords[:,pj], yz_plane)
+            # -- get vector for the upper body in the YZ plane
+            upper_body_yz = torch.nn.functional.normalize(proj_svmid_yz-proj_pj_yz, dim=-1) # pelvis-shoulders
+            # -- find the angle with the Y-unit vector on the YZ plane
+            v1 = project_on_2d_plane(y_unit.view(1,-1), yz_plane) # (unit vec: normalized)
+            x_angle = torch_cos2deg((v1*upper_body_yz).sum(-1))
+            # -- find the sign:
+            # 	* forward: bending in the direction of axis z
+            # 	* backward: bending in the opposite direction of z
+            vs = project_on_2d_plane(z_unit.view(1,-1), yz_plane) # (unit vec: normalized)
+            x_angle *= torch.sign((vs*upper_body_yz).sum(-1))
+
+            # NOTE: the person is not said to be bent, if at least one of their
+            # leg is not below their neck (eg. the person is lying
+            # # down, or doing a handstand); detect such cases
+            # -- find the height of the lowest ankle
+            minimum_ankle_height = torch.stack((joint_coords[:,laj,1], joint_coords[:,raj,1]), dim=1).min(1).values
+            # -- define threshold under which the ankle is considered below the
+            # neck
+            condition = minimum_ankle_height < (middle_shoulder_line[:,1] - self.threshold_ankle_below_neck)
+            # -- when none of the ankles are below the neck (~condition),
+            # the person is not bent (artifically set the angle of the body to 0)
+            x_angle[~condition] = 0
+
+            return x_angle.view(-1,1)
+
+        elif self.axis == 1:
+            # (2) twisting left/right (Y)
+            # consists in looking at the angle between the shoulder line and the 
+            # X-unit vector, on the XZ plane
+            # -- project the shoulder joints on the XZ plane
+            proj_lsj = project_on_2d_plane(joint_coords[:,lsj], xz_plane)
+            proj_rsj = project_on_2d_plane(joint_coords[:,rsj], xz_plane)
+            # -- get the vector corresponding to the shoulder line on the XZ plane
+            shoulder_line_xz = proj_lsj - proj_rsj
+            # -- find the angle with the X-unit vector on the XZ plane
+            v1 = project_on_2d_plane(x_unit.view(1,-1), xz_plane) # (unit vec: normalized)
+            v2 = torch.nn.functional.normalize(shoulder_line_xz, dim=-1)
+            y_angle = torch_cos2deg((v1*v2).sum(-1))
+            # -- find the sign
+            # 	* right: twisting in the direction of axis z
+            # 	* left: bending in the opposite direction of z
+            vs = project_on_2d_plane(z_unit.view(1,-1), xz_plane) # (unit vec: normalized)
+            y_angle *= torch.sign((vs*shoulder_line_xz).sum(-1))
+            return y_angle.view(-1,1)
+
+        elif self.axis == 2:
+            # (3) leaning left/right (Z)
+            # consists in looking at the angle between the upper body and
+            # the YZ plane
+            # -- get the vector along the upper body
+            middle_shoulder_line = (joint_coords[:,lsj] + joint_coords[:,rsj])/2
+            upper_body = middle_shoulder_line - joint_coords[:,pj] # pelvis-shoulders
+            upper_body_norm = torch.nn.functional.normalize(upper_body, dim=-1)
+            # -- find the angle between this vector and the YZ plane
+            # * compute the cosine angle with the normal to this plane (ie.
+            #   the X-unit vector)
+            # * deduce the angle to the plane: 90 - theta 
+            z_angle = 90 - torch_cos2deg((upper_body_norm*x_unit).sum(-1))
+            return z_angle.view(-1,1)
+
+
+class PosecodeRelativeRot(Posecode):
+
+    def __init__(self, axis):
+        super().__init__()
+        self.input_kind = "rotations" # (coords|rotations)
+        pov = POSECODE_OPERATORS_VALUES[['relativeRotX', 'relativeRotY', 'relativeRotZ'][axis]]
+        self.fill_attributes(pov)
+        self.axis = axis
+
+        # define the kinematic tree: giving the direct parent of each joint
+        # in the kinematic tree
+        # NOTE: this list was obtained as follow:
+        # * load the smplh body model (the very file of it)
+        # * extract the variable under key 'kintree_trable'
+        # * take element 0 (smplh_body_model_data['kintree_trable'][0])
+        # * set the first value to -1
+        self.kinematic_tree = [-1, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 9, 9, 12,
+                13, 14, 16, 17, 18, 19, 20, 22, 23, 20, 25, 26, 20, 28, 29,
+                20, 31, 32, 20, 34, 35, 21, 37, 38, 21, 40, 41, 21, 43, 44,
+                21, 46, 47, 21, 49, 50]
+
+    def get_joint_kin_chain(self, joint_id):
+        """
+        Give the list of joints that are parent to the given joint id, in
+        kinematic order (eg. [0,3,5,9,12] for joint_id=12 ~ the neck).
+        """
+        kin_chain = []
+        curr_idx = joint_id
+        while curr_idx != -1:
+            kin_chain.append(curr_idx)
+            curr_idx = self.kinematic_tree[curr_idx]
+        return kin_chain[::-1]
+
+    def eval(self, joint_ids, joint_rotations):
+        """Evaluate the posecode for each of the provided joint sets and each
+        pose.
+        
+        Args:
+            joint_ids (torch.tensor): size (nb of joint sets, 2), ids of the
+                joints to study. For each joint set, the posecode studies
+                the rotation of the first joint relatively to the second
+                joint (along the axis defined at the class level).
+                NOTE: the second joint has to be a parent of the first joint!
+            joint_rotations (torch.tensor): size (nb of poses, 22 or 52, 3),
+                relative rotation of the different joints, for several poses,
+                in axis-angle representation (basically the SMPL pose representation).
+                NOTE: the joint rotations should follow:
+                (global_orient, body_pose, optional:left_hand_pose, optional:right_hand_pose)
+
+        Returns:
+            (torch.tensor): size (nb of poses, nb of joint sets), value of the
+            posecode for each joint set and each pose.
+        """
+        assert joint_rotations.shape[1] in [22,52], "joint_rotations, shape (nb of poses, 22 or 52, 3) should follow: (global_orient, body_pose, optional:left_hand_pose, optional:right_hand_pose)"
+        
+        # get kinematic parents of each first joint
+        first_joints = set(joint_ids[:,0].tolist())
+        parents = {fj: self.get_joint_kin_chain(fj) for fj in first_joints}
+
+        # compute relative rotations for each joint pair
+        nb_poses, nb_joint_set = len(joint_rotations), len(joint_ids)
+        relrot = torch.zeros(nb_poses, nb_joint_set, 3) # axis-angle
+        for jset_ind in range(nb_joint_set):
+            j1, j2 = joint_ids[jset_ind].tolist()
+            if j1!=j2:
+                # get the list of intermediate joints
+                p = parents[j1]
+                j_intermediate = p[p.index(j2):]
+                # compute the relative rotation
+                relrot[:,jset_ind] = roma.rotvec_composition([joint_rotations[:,ji] for ji in j_intermediate])
+            else:
+                relrot[:,jset_ind] = joint_rotations[:,j1]
+
+        # convert to Euler angle, keep the one around the relevant axis
+        r = utils.rotvec_to_eulerangles(relrot.view(-1,3))[self.axis].view(nb_poses, nb_joint_set)
+        # convert to degrees
+        r = rad2deg(r)
+        return r
+
+
 ## POSECODE OPERATORS
 ################################################################################
 
@@ -325,6 +542,12 @@ POSECODE_OPERATORS = {
     "relativePosZ": PosecodeRelativePos(2),
     "relativeVAxis": PosecodeRelativeVAxis(),
     "onGround": PosecodeOnGround(),
+    "bodyInclineX": PosecodeBodyIncline(0),
+    "bodyInclineY": PosecodeBodyIncline(1),
+    "bodyInclineZ": PosecodeBodyIncline(2),
+    "relativeRotX": PosecodeRelativeRot(0),
+    "relativeRotY": PosecodeRelativeRot(1),
+    "relativeRotZ": PosecodeRelativeRot(2),
 }
 
 

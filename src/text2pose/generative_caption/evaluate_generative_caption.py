@@ -41,6 +41,7 @@ def load_model(model_path, device):
 	decoder_latentD = ckpt['args'].decoder_latentD
 	decoder_nlayers = ckpt['args'].decoder_nlayers
 	decoder_nhead = ckpt['args'].decoder_nhead
+	num_body_joints = getattr(ckpt['args'], 'num_body_joints', 52)
 
 	# load model
 	model = DescriptionGenerator(text_decoder_name=text_decoder_name,
@@ -48,7 +49,9 @@ def load_model(model_path, device):
 								decoder_nlayers=decoder_nlayers,
 								decoder_nhead=decoder_nhead,
 								encoder_latentD=encoder_latentD,
-								decoder_latentD=decoder_latentD).to(device)
+								decoder_latentD=decoder_latentD,
+								num_body_joints=num_body_joints
+								).to(device)
 	model.load_state_dict(ckpt['model'])
 	model.eval()
 	print(f"Loaded model from (epoch {ckpt['epoch']}):", model_path)
@@ -93,8 +96,9 @@ def eval_model(model_path, dataset_version, pose_model_version=None, fid_version
 	if not os.path.isfile(filename_res) or OVERWRITE_RESULT:
 		if control_measures and "auto" in control_measures:
 			d = prepare_dataset_for_auto_control_metric(split, tokenizer_name, original_dataset_version=dataset_version, auto_specification=control_measures)
+			d.num_body_joints=model.pose_encoder.num_body_joints
 		else:
-			d = PoseScript(version=dataset_version, split=split, tokenizer_name=tokenizer_name, caption_index=0, cache=True) # caption_index=0: will yield the first reference text 
+			d = PoseScript(version=dataset_version, split=split, tokenizer_name=tokenizer_name, caption_index=0, num_body_joints=model.pose_encoder.num_body_joints, cache=True) # caption_index=0: will yield the first reference text 
 		results = compute_eval_metrics(model, d, device,
 					pose_model=pose_model,
 					fid_version=fid_version,
@@ -179,9 +183,10 @@ def compute_eval_metrics(model, dataset, device, pose_model=None, fid_version=No
 	"""
 	
 	# initialize dataloader
+	batch_size = 32
 	data_loader = torch.utils.data.DataLoader(
 		dataset, sampler=None, shuffle=False,
-		batch_size=32,
+		batch_size=batch_size,
 		num_workers=8,
 		pin_memory=True,
 		drop_last=False
@@ -230,7 +235,7 @@ def compute_eval_metrics(model, dataset, device, pose_model=None, fid_version=No
 		poses = item['pose'].to(device)
 		indices = item['indices']
 		ground_truth_texts.update({index.item(): dataset.get_all_captions(index) for index in indices})
-		batch_size = poses.size(0) # may change if batch_size > 1, due to incomplete batches
+		this_batch_size = len(item['indices']) # may be different from batch_size, due to incomplete batches
 		
 		with torch.inference_mode():
 
@@ -278,7 +283,7 @@ def compute_eval_metrics(model, dataset, device, pose_model=None, fid_version=No
 		
 				# kld metrics
 				kld = torch.sum(torch.distributions.kl.kl_divergence(output['q_z'], output['t_z']), dim=[1])
-				kld_original = torch.sum(torch.distributions.kl.kl_divergence(output_original['q_z'], output_original['t_z']), dim=[1]) # (batch_size)
+				kld_original = torch.sum(torch.distributions.kl.kl_divergence(output_original['q_z'], output_original['t_z']), dim=[1]) # (this_batch_size)
 				results['kld_a'] += torch.distributions.kl.kl_divergence(output_original['t_z'], output['t_z']).sum().detach().item() # sum over features & batch
 				results['kld_b'] += (kld_original - kld).sum().detach().item() # sum over batch
 
@@ -291,8 +296,8 @@ def compute_eval_metrics(model, dataset, device, pose_model=None, fid_version=No
 				caption_lengths_ = caption_lengths_.to(device)
 				# compute embeddings
 				pose_embs, text_embs = textret_model(poses, caption_tokens_, caption_lengths_)
-				all_pose_embs[i_batch*batch_size:i_batch*batch_size+len(indices)] = pose_embs
-				all_text_embs[i_batch*batch_size:i_batch*batch_size+len(indices)] = text_embs
+				all_pose_embs[i_batch*batch_size:i_batch*batch_size+this_batch_size] = pose_embs
+				all_text_embs[i_batch*batch_size:i_batch*batch_size+this_batch_size] = text_embs
 
 	# average over the dataset
 	for k in pose_metrics: pose_metrics[k] /= len(dataset)
@@ -302,7 +307,7 @@ def compute_eval_metrics(model, dataset, device, pose_model=None, fid_version=No
 	if pose_model is not None:
 		pose_metrics.update({f'v2v_elbo': pose_metrics[f'v2v_elbo']/(body_model.J_regressor.shape[1] * 3),
 							f'jts_elbo': pose_metrics[f'jts_elbo']/(body_model.J_regressor.shape[0] * 3),
-							f'rot_elbo': pose_metrics[f'rot_elbo']/(pose_model.pose_decoder.num_joints * 9)})
+							f'rot_elbo': pose_metrics[f'rot_elbo']/(pose_model.pose_decoder.num_body_joints * 9)})
 
 	# compute retrieval metrics
 	if textret_model is not None:

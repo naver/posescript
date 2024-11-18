@@ -59,11 +59,11 @@ def scale_and_format_results(ret):
 		# convert each sub-element to string
 		if k=='fid':
 			ret[k] = ['%.2f' % x for x in ret[k]]
-		elif re.match(r'.*(jts|v2v)_dist.*', k):
+		elif re.match(r'.*(jts|v2v)_dist.*', k) or re.match(r'.*JtposDist.*', k):
 			ret[k] = ['%.0f' % (x*DIST_coeff) for x in ret[k]]
 		elif k in ['bleu', 'rougeL', 'meteor']:
 			ret[k] = ['%.2f' % (x*NLP_metric_coeff) for x in ret[k]]
-		elif 'R@' in k:
+		elif 'R@' in k or 'mRecall' in k:
 			ret[k] = ['%.1f' % x for x in ret[k]]
 		else:
 			ret[k] = ['%.2f' % x for x in ret[k]]
@@ -130,10 +130,10 @@ def eval_model_all_runs(eval_model_function, model_path, **kwargs):
 ################################################################################
 
 def L2multi(x, y):
-    # x: torch tensor of size (*,N,P,3) or (*,P,3)
-    # y: torch tensors of size (*,P,3)
-    # return: torch tensor of size (*,N,1) or (*,1)
-    return torch.linalg.norm(x-y, dim=-1).mean(-1)
+	# x: torch tensor of size (*,N,P,3) or (*,P,3)
+	# y: torch tensors of size (*,P,3)
+	# return: torch tensor of size (*,N,1) or (*,1)
+	return torch.linalg.norm(x-y, dim=-1).mean(-1)
 
 
 def geodesic_dist_from_rotvec(X,Y,batch_size):
@@ -141,11 +141,15 @@ def geodesic_dist_from_rotvec(X,Y,batch_size):
 	# return: torch tensor of size eg. (batch_size, 1), in degrees
 	return roma.rotmat_geodesic_distance(
 					roma.rotvec_to_rotmat(X.view(-1, 3)).view(batch_size,-1,3,3),
-				    roma.rotvec_to_rotmat(Y.view(-1, 3)).view(batch_size,-1,3,3)
+					roma.rotvec_to_rotmat(Y.view(-1, 3)).view(batch_size,-1,3,3)
 				).mean(-1) * 180 / torch.pi
 
 
 def x2y_recall_metrics(x_features, y_features, k_values, sstr=""):
+	"""
+	Args:
+		x_features, y_features: shape (batch_size, latentD)
+	"""
 
 	# initialize metrics
 	nb_x = len(x_features)
@@ -180,10 +184,11 @@ def textret_metrics(all_text_embs, all_pose_embs):
 	for i in tqdm(range(n_queries)):
 		# average the process over a number of repetitions
 		for _ in range(config.r_precision_n_repetitions):
-			# randomly select 31 elements
-			selected = random.sample(range(n_queries), 32)
-			selected = [i] + [s for s in selected if s != i][:31]
-			# compute scores (use the same as for model training: similarity instead of the Euclidian distance)
+			# randomly select config.sample_size_r_precision elements
+			# (including the query)
+			selected = random.sample(range(n_queries), config.sample_size_r_precision)
+			selected = [i] + [s for s in selected if s != i][:config.sample_size_r_precision - 1]
+			# compute scores (use the same as for model training: similarity instead of the Euclidean distance)
 			scores = all_text_embs[i].view(1,-1).mm(all_pose_embs[selected].t())[0].cpu()
 			multimodal_score += scores[0] # the "right" score is the first one
 			# rank
@@ -203,13 +208,13 @@ def textret_metrics(all_text_embs, all_pose_embs):
 def add_elbo_and_reconstruction(model_input, results, model, body_model, output_distr_key, reference_pose_key):
 	"""
 	Args:
-	    model_input: dict yielding the right arguments for the model forward
-	    	functions.
-	    results: dict containing initial values for all elbo & reconstruction
+		model_input: dict yielding the right arguments for the model forward
+			functions.
+		results: dict containing initial values for all elbo & reconstruction
 	   		metrics.
 		model: pose generative model
-	    output_distr_key: key to retrieve the output query (fusion) distribution
-	    	from the output of the pose generative model
+		output_distr_key: key to retrieve the output query (fusion) distribution
+			from the output of the pose generative model
 		reference_pose_key: key to the reference poses in the model_input dict
 
 	Returns:
@@ -280,15 +285,16 @@ def compute_NLP_metrics(ground_truth_texts, generated_texts):
 	return results
 
 
-def posefix_control_measures(dataset_version, split):
+def posefix_control_measures(dataset_version, split, num_body_joints=config.NB_INPUT_JOINTS):
 	"""
 	* Compute control "reconstruction" measures:
-	    get measures for when comparing B with a pose that has nothing to do
-	    with it (ie. a random pose, pose A)
+		get measures for when comparing B with a pose that has nothing to do
+		with it (ie. a random pose, pose A)
 	* Compute the reference measures of top-K R-precision for a random output
 	
 	NOTE: these measures are model-independent
 	"""
+	print(f"Compute control measures with num_body_joints={num_body_joints}")
 
 	# specific imports
 	from human_body_prior.body_model.body_model import BodyModel
@@ -298,7 +304,7 @@ def posefix_control_measures(dataset_version, split):
 	device = torch.device('cuda:0')
 
 	# initialize dataloader
-	dataset = PoseFix(version=dataset_version, split=split, tokenizer_name=None, caption_index=0, cache=False) # having `cache` set to False will force the dataset to load the data; also, we don't need the tokenizer here
+	dataset = PoseFix(version=dataset_version, split=split, tokenizer_name=None, caption_index=0, num_body_joints=num_body_joints, cache=False) # having `cache` set to False will force the dataset to load the data; also, we don't need the tokenizer here
 	data_loader = torch.utils.data.DataLoader(
 		dataset, sampler=None, shuffle=False,
 		batch_size=32,
@@ -321,7 +327,7 @@ def posefix_control_measures(dataset_version, split):
 		# set up data
 		poses_A = item['poses_A'].to(device)
 		poses_B = item['poses_B'].to(device)
-		batch_size = poses_A.size(0) # may change if batch_size > 1, due to incomplete batches
+		this_batch_size = len(poses_A) # may be different from batch_size, due to incomplete batches
 
 		with torch.inference_mode():				
 
@@ -331,13 +337,13 @@ def posefix_control_measures(dataset_version, split):
 			# -- compare with A
 			results['v2v_dist_A'] += L2multi(bm_orig.v, bm_A.v).sum().detach().item()
 			results['jts_dist_A'] += L2multi(bm_orig.Jtr, bm_A.Jtr).sum().detach().item()
-			results['rot_dist_A'] += geodesic_dist_from_rotvec(poses_A, poses_B, batch_size).sum().detach().item()
+			results['rot_dist_A'] += geodesic_dist_from_rotvec(poses_A, poses_B, this_batch_size).sum().detach().item()
 
 			# -- compare with a "random" pose (shuffled A)
-			shuffling_rand = (torch.arange(batch_size).to(device)+batch_size//2)%batch_size
+			shuffling_rand = (torch.arange(this_batch_size).to(device)+this_batch_size//2)%this_batch_size
 			results['v2v_dist_rand'] += L2multi(bm_orig.v, bm_A.v[shuffling_rand, ...]).sum().detach().item()
 			results['jts_dist_rand'] += L2multi(bm_orig.Jtr, bm_A.Jtr[shuffling_rand, ...]).sum().detach().item()
-			results['rot_dist_rand'] += geodesic_dist_from_rotvec(poses_A[shuffling_rand, ...], poses_B, batch_size).sum().detach().item()
+			results['rot_dist_rand'] += geodesic_dist_from_rotvec(poses_A[shuffling_rand, ...], poses_B, this_batch_size).sum().detach().item()
 
 	# average over the dataset
 	for k in results: results[k] /= len(dataset)

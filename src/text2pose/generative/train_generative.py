@@ -44,9 +44,9 @@ class PoseGenerationTrainer(GenericTrainer):
 		data_size = self.args.data_size if split=="train" else None
 
 		if "posescript" in self.args.dataset:
-			d = PoseScript(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, data_size=data_size)
+			d = PoseScript(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=self.args.num_body_joints, data_size=data_size)
 		elif "posefix" in self.args.dataset:
-			d = PoseFix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, data_size=data_size, posescript_format=True)
+			d = PoseFix(version=self.args.dataset, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=self.args.num_body_joints, data_size=data_size, posescript_format=True)
 		else:
 			raise NotImplementedError
 		return d
@@ -56,7 +56,8 @@ class PoseGenerationTrainer(GenericTrainer):
 		print('Load model')
 		self.model = CondTextPoser(text_encoder_name=self.args.text_encoder_name,
 								   transformer_topping=self.args.transformer_topping,
-								   latentD=self.args.latentD)
+								   latentD=self.args.latentD,
+								   num_body_joints=self.args.num_body_joints)
 		self.model.to(self.device)
 
 
@@ -72,7 +73,7 @@ class PoseGenerationTrainer(GenericTrainer):
 	def init_other_training_elements(self):
 		self.init_fid(name_in_batch="pose")
 		self.init_body_model()
-		self.data_augmentation_module = DataAugmentation(self.args, mode="posescript", tokenizer_name=get_tokenizer_name(self.args.text_encoder_name))
+		self.data_augmentation_module = DataAugmentation(self.args, mode="posescript", tokenizer_name=get_tokenizer_name(self.args.text_encoder_name), nb_joints=self.args.num_body_joints)
 
 
 	def training_epoch(self, epoch):
@@ -84,7 +85,7 @@ class PoseGenerationTrainer(GenericTrainer):
 	
 
 	def validation_epoch(self, epoch):
-		if (epoch+1)%self.args.val_every==0: # and lr_scheduler is None
+		if self.args.val_every and (epoch+1)%self.args.val_every==0: # and lr_scheduler is None
 			return self.one_epoch(
 							epoch=epoch,
 							is_training=False

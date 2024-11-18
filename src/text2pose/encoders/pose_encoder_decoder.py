@@ -1,6 +1,6 @@
 ##############################################################
 ## text2pose                                                ##
-## Copyright (c) 2022, 2023                                 ##
+## Copyright (c) 2022, 2023, 2024                           ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
 ## and Naver Corporation                                    ##
 ## Licensed under the CC BY-NC-SA 4.0 license.              ##
@@ -26,10 +26,11 @@ class Object(object):
 
 class PoseEncoder(nn.Module):
 
-    def __init__(self, num_neurons=512, num_neurons_mini=32, latentD=512, role=None):
+    def __init__(self, num_neurons=512, num_neurons_mini=32, latentD=512, num_body_joints=config.NB_INPUT_JOINTS, role=None):
         super(PoseEncoder, self).__init__()
 
-        self.input_dim = config.NB_INPUT_JOINTS * 3
+        self.num_body_joints = num_body_joints
+        self.input_dim = self.num_body_joints * 3
 
         # use VPoser pose encoder architecture...
         vposer_params = Object()
@@ -53,6 +54,8 @@ class PoseEncoder(nn.Module):
                 L2Norm()]
         elif role == "generative":
             encoder_layers += [ NormalDistDecoder(num_neurons, latentD) ]
+        elif role == "no_output_layer":
+            encoder_layers += [ ]
         elif role == "modifier":
             encoder_layers += [
                 nn.Linear(num_neurons, latentD)
@@ -68,10 +71,10 @@ class PoseEncoder(nn.Module):
 
 class PoseDecoder(nn.Module):
 
-    def __init__(self, num_neurons=512, latentD=32):
+    def __init__(self, num_neurons=512, latentD=32, num_body_joints=config.NB_INPUT_JOINTS):
         super(PoseDecoder, self).__init__()
 
-        self.num_joints = config.NB_INPUT_JOINTS
+        self.num_body_joints = num_body_joints
 
         # use VPoser pose decoder architecture...
         vposer_params = Object()
@@ -81,7 +84,7 @@ class PoseDecoder(nn.Module):
         vposer = VPoser(vposer_params)
         decoder_layers = list(vposer.decoder_net.children())
         # change one of the final layers to have the right data output size
-        decoder_layers[-2] = nn.Linear(num_neurons, self.num_joints * 6)
+        decoder_layers[-2] = nn.Linear(num_neurons, self.num_body_joints * 6)
 
         self.decoder = nn.Sequential(*decoder_layers)
 
@@ -89,6 +92,6 @@ class PoseDecoder(nn.Module):
         bs = Zin.shape[0]
         prec = self.decoder(Zin)
         return {
-            'pose_body': roma.rotmat_to_rotvec(prec.view(-1, 3, 3)).view(bs, -1, 3), # (batch_size, num_joints, 3) 
-            'pose_body_matrot': prec.view(bs, -1, 9) # (batch_size, num_joints, 9) 
+            'pose_body': roma.rotmat_to_rotvec(prec.view(-1, 3, 3)).view(bs, -1, 3), # (batch_size, num_body_joints, 3) 
+            'pose_body_matrot': prec.view(bs, -1, 9) # (batch_size, num_body_joints, 9) 
         }

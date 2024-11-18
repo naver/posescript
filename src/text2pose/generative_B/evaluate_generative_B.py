@@ -38,12 +38,14 @@ def load_model(model_path, device):
 	transformer_topping = ckpt['args'].transformer_topping
 	correction_module_mode = ckpt['args'].correction_module_mode
 	latentD = ckpt['args'].latentD
+	num_body_joints = getattr(ckpt['args'], 'num_body_joints', 52)
 	special_text_latentD = ckpt['args'].special_text_latentD
 	
 	# load model
 	model = PoseBGenerator(text_encoder_name=text_encoder_name,
 							transformer_topping=transformer_topping,
 							latentD=latentD,
+							num_body_joints=num_body_joints,
 							special_text_latentD=special_text_latentD,
 							correction_module_mode=correction_module_mode).to(device)
 	model.load_state_dict(ckpt['model'])
@@ -75,7 +77,7 @@ def eval_model(model_path, dataset_version, fid_version, split='val'):
 	for cap_ind in range(nb_caps):
 		filename_res = get_res_file(cap_ind)
 		if not os.path.isfile(filename_res) or OVERWRITE_RESULT:
-			d = PoseFix(version=dataset_version, split=split, tokenizer_name=tokenizer_name, caption_index=cap_ind, cache=True)
+			d = PoseFix(version=dataset_version, split=split, tokenizer_name=tokenizer_name, caption_index=cap_ind, num_body_joints=model.pose_encoder.num_body_joints, cache=True)
 			cap_results = compute_eval_metrics(model, d, fid_version, device)
 			evaluate.save_results_to_file(cap_results, filename_res)
 		else:
@@ -142,7 +144,7 @@ def compute_eval_metrics(model, dataset, fid_version, device):
 	# normalize the elbo (the same is done earlier for the reconstruction metrics)
 	pose_metrics.update({'v2v_elbo':pose_metrics['v2v_elbo']/(body_model.J_regressor.shape[1] * 3),
 						'jts_elbo':pose_metrics['jts_elbo']/(body_model.J_regressor.shape[0] * 3),
-						'rot_elbo':pose_metrics['rot_elbo']/(model.pose_decoder.num_joints * 9)})
+						'rot_elbo':pose_metrics['rot_elbo']/(model.pose_decoder.num_body_joints * 9)})
 
 	# compute fid metric
 	results = {'fid': fid.compute()}
@@ -199,7 +201,7 @@ def eval_model_multiset(model_path, dataset_version, fid_version, split='val'):
 	model.sample_nposes = model.special_eval_sample_nposes
 
 	# load dataset 
-	dataset = PoseFix(version=dataset_version, split=split, tokenizer_name=tokenizer_name, caption_index=0, cache=True)
+	dataset = PoseFix(version=dataset_version, split=split, tokenizer_name=tokenizer_name, caption_index=0, num_body_joints=model.pose_encoder.num_body_joints, cache=True)
 	dataset.init_tokenizer()
 	# create related utilitaries
 	empty_text_tokens = dataset.tokenizer("")
@@ -229,7 +231,7 @@ def eval_model_multiset(model_path, dataset_version, fid_version, split='val'):
 	
 	# load posescript information; create a data_cache with pairs where pose B is also annotated in PoseScript
 	from text2pose.data import PoseScript
-	posescript_dataset = PoseScript(version="posescript-H2", split=split, tokenizer_name=tokenizer_name, caption_index=0, cache=True)
+	posescript_dataset = PoseScript(version="posescript-H2", split=split, tokenizer_name=tokenizer_name, caption_index=0, num_body_joints=model.pose_encoder.num_body_joints, cache=True)
 	posescript_data = {cached_element[3]:cached_element[1:3] for cached_element in posescript_dataset._data_cache}
 	intersection_cache = [cached_element for cached_element in dataset._data_cache if cached_element[6] in posescript_data]
 

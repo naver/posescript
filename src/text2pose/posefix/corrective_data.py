@@ -1,6 +1,6 @@
 ##############################################################
 ## PoseFix                                                  ##
-## Copyright (c) 2023                                       ##
+## Copyright (c) 2023, 2024                                 ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
 ## and Naver Corporation                                    ##
 ## Licensed under the CC BY-NC-SA 4.0 license.              ##
@@ -31,6 +31,11 @@
 # (also in posescript/utils.py)
 
 
+# Helper function
+def flatten_list(l):
+    return [item for sublist in l for item in sublist]
+
+
 ################################################################################
 #                                                                              #
 #                   PAIRCODE EXTRACTION                                        #
@@ -47,9 +52,9 @@ PAIR_INTPTTN_PREFIX = '(i) '
 
 # The following describes the different paircode operators (ie. kinds of relations):
 # - direction_switch: list of interpretations defining switch in direction semantic (NOTE: currently assume only one switch!)
-# - category_names: names used for computation; they all must be unique among paircodes (ie. within PAIRCODE_OPERATORS_VALUES)
+# - category_names: names used for computation; they all must be unique among elementary paircodes (ie. within PAIRCODE_OPERATORS_VALUES)
 # - category_names_ticks: names used for display
-# - category_thresholds: values (in degrees or meters) to distinguish between 2 categories (increasing)
+# - category_thresholds: values (in degrees or meters) to distinguish between 2 categories (increasing); in increasing order of value
 # - random_max_offset: value (in degrees or meters) used to randomize the binning step (noise level)
 
 PAIRCODE_OPERATORS_VALUES = {
@@ -87,6 +92,41 @@ PAIRCODE_OPERATORS_VALUES = {
         'category_names_ticks': ['more to front', 'slightly more to front', 'z-ignored', 'slightly more to back', 'more to back'],
         'category_thresholds': [-0.40, -0.15, 0.15, 0.40],
         'random_max_offset': 0.05
+    },
+    "pair_bodyInclineX": { # values in degrees
+        'direction_switch': ['body_ignored_x_incline_more'],
+        'category_names': ['body incline forward more', 'body incline forward slightly more', 'body_ignored_x_incline_more', 'body incline backward slightly more', 'body incline backward more'],
+        'category_names_ticks': ['', '', '', '', ''],
+        'category_thresholds': [-45, -20, 20, 45],
+        'random_max_offset': 5
+    },
+    "pair_bodyInclineY": { # values in degrees
+        'direction_switch': ['body_ignored_y_twist_more'],
+        'category_names': ['body twist right more', 'body twist right slightly more', 'body_ignored_y_twist_more', 'body twist left slightly more', 'body twist left more'],
+        'category_names_ticks':  ['', '', '', '', ''],
+        'category_thresholds': [-45, -20, 20, 45],
+        'random_max_offset': 5
+    },
+    "pair_bodyInclineZ": { # values in degrees
+        'direction_switch': ['body_ignored_z_lean_more'],
+        'category_names': ['body lean left more', 'body lean left slightly more', 'body_ignored_z_lean_more', 'body lean right slightly more', 'body lean right more'],
+        'category_names_ticks': ['', '', '', '', ''],
+        'category_thresholds': [-30, -15, 15, 30],
+        'random_max_offset': 5
+    },
+    "pair_relativeRotX": { # values in degrees
+        'direction_switch': ['ignored_x_incline_more'],
+        'category_names': ['incline forward more', 'ignored_x_incline_more', 'incline backward more'],
+        'category_names_ticks': ['', '', ''],
+        'category_thresholds': [-30, 30],
+        'random_max_offset': 5
+    },
+    "pair_relativeRotY": { # values in degrees
+        'direction_switch': ['ignored_y_turn_more'],
+        'category_names': ['turn left more', 'turn left slightly more', 'ignored_y_turn_more', 'turn right slightly more', 'turn right more'],
+        'category_names_ticks': ['', '', '', '', ''],
+        'category_thresholds': [-30, -15, 15, 30],
+        'random_max_offset': 5
     },
     # ADD_PAIRCODE_KIND
 }
@@ -279,6 +319,42 @@ RELATIVEPOS_PAIRCODES = [
 ]
 
 
+#********************#
+#  BODY INCLINATION  #
+#********************#
+
+BODYINCLINE_PAIRCODES = [
+    [('left_shoulder', 'right_shoulder', 'pelvis', 'left_ankle', 'right_ankle'),
+     'body', [['ALL'], ['ALL'], ['ALL']],
+     [[],[],[]], [[],[],[]], [[],[],[]]],
+]
+
+
+#*********************#
+#  RELATIVE ROTATION  #
+#*********************#
+# (declaring as if there were 3 axes)
+
+RELATIVEROT_PAIRCODES = [
+    [('head', 'pelvis'), 'head', [None, ['ALL'], None], # head turned left/right
+     [[],[],[]], [[],[],[]], [[],[],[]]],
+    [('head', 'neck'), 'head', [['ALL'], None, None], # chin tucked in/out
+     [[],[],[]], [[],[],[]], [[],[],[]]],
+]
+
+# NOTE: particular case: we want to use specific sentences for the paircodes
+# dealing with the rotation of the head:
+# -- gather all relativerot paircode interpretations
+# (currently, only considering pair_relativeRotX & pair_relativeRotY!)
+rri = flatten_list([PAIRCODE_OPERATORS_VALUES[f'pair_relativeRot{axis}']['category_names'] for axis in ['X','Y']])
+rri = [rrri for rrri in rri if 'ignored' not in rrri]
+PAIR_SPECIFIC_INTPTT_HEAD_ROTATION = {f'{PAIR_INTPTTN_PREFIX}{k}':f'{PAIR_INTPTTN_PREFIX}head {k}' for k in rri}
+
+
+#***************************#
+# ... ADD_POSECODE_KIND ... #
+#***************************#
+
 # ADD_PAIRCODE_KIND (use a new '#***#' box, and define related paircodes below it)
 
 
@@ -422,13 +498,22 @@ ALL_ELEMENTARY_PAIRCODES = {
     "pair_relativePosX": [[p[0], p[1], p[2][0], p[3][0], p[4][0], p[5][0]] for p in RELATIVEPOS_PAIRCODES if p[2][0]],
     "pair_relativePosY": [[p[0], p[1], p[2][1], p[3][1], p[4][1], p[5][1]] for p in RELATIVEPOS_PAIRCODES if p[2][1]],
     "pair_relativePosZ": [[p[0], p[1], p[2][2], p[3][2], p[4][2], p[5][2]] for p in RELATIVEPOS_PAIRCODES if p[2][2]],
+    "pair_bodyInclineX": [[p[0], p[1], p[2][0], p[3][0], p[4][0], p[5][0]] for p in BODYINCLINE_PAIRCODES if p[2][0]],
+    "pair_bodyInclineY": [[p[0], p[1], p[2][1], p[3][1], p[4][1], p[5][1]] for p in BODYINCLINE_PAIRCODES if p[2][1]],
+    "pair_bodyInclineZ": [[p[0], p[1], p[2][2], p[3][2], p[4][2], p[5][2]] for p in BODYINCLINE_PAIRCODES if p[2][2]],
+    "pair_relativeRotX": [[p[0], p[1], p[2][0], p[3][0], p[4][0], p[5][0]] for p in RELATIVEROT_PAIRCODES if p[2][0]],
+    "pair_relativeRotY": [[p[0], p[1], p[2][1], p[3][1], p[4][1], p[5][1]] for p in RELATIVEROT_PAIRCODES if p[2][1]],
     # ADD_PAIRCODE_KIND
 }
 
 # kinds of paircodes for which the joints in the joint sets will *systematically*
 # not be used as main subject for description (the pipeline will resort to the
 # focus_body_part instead)
-PAIRCODE_KIND_FOCUS_JOINT_BASED = ['pair_angle', 'pair_relativePosX', 'pair_relativePosY', 'pair_relativePosZ'] # ADD_PAIRCODE_KIND
+PAIRCODE_KIND_FOCUS_JOINT_BASED = ['pair_angle'] + \
+                        [f'pair_relativePos{x}' for x in ['X', 'Y', 'Z']] + \
+                        [f'pair_bodyIncline{x}' for x in ['X', 'Y', 'Z']] + \
+                        [f'pair_relativeRot{x}' for x in ['X', 'Y']]
+                        # ADD_PAIRCODE_KIND
 
 
 ################################################################################
@@ -460,7 +545,9 @@ PAIR_PROP_AGGREGATION_HAPPENS = 0.95
 # interpretations
 paircode_kind_not_aggregable_with_fbp_intptt = ['pair_distance'] # ADD_PAIRCODE_KIND; ADD_SUPER_PAIRCODE
 # for easy post-process at captioning time, list directly all the relevant interpretations
-PAIRCODE_INTPTT_NOT_AGGREGABLE_WITH_FBP_INTPTT = [f"{PAIR_INTPTTN_PREFIX}{c}" for pk in paircode_kind_not_aggregable_with_fbp_intptt for c in PAIRCODE_OPERATORS_VALUES[pk]["category_names"]]
+PAIRCODE_INTPTT_NOT_AGGREGABLE_WITH_FBP_INTPTT = [f"{PAIR_INTPTTN_PREFIX}{c}" for pk in paircode_kind_not_aggregable_with_fbp_intptt for c in PAIRCODE_OPERATORS_VALUES[pk]["category_names"]] + \
+                                                 [f"{PAIR_INTPTTN_PREFIX}touch"]
+
 
 
 ################################################################################
@@ -471,12 +558,14 @@ PAIRCODE_INTPTT_NOT_AGGREGABLE_WITH_FBP_INTPTT = [f"{PAIR_INTPTTN_PREFIX}{c}" fo
 
 # Define different ways to refer to the figure to start the modifier
 # NOTE: use "neutral" words
-SENTENCE_START = ['the person', 'the subject', 'they'] # when using the "descriptive" formulation ("the person move their right hand...") instead of the "instructive" one ("move your right hand...")
+SENTENCE_START = ['the person', 'the subject', 'they'] # when using the "descriptive" formulation ("the person moves their right hand...") instead of the "instructive" one ("move your right hand...")
 BODY_REFERENCE_MID_SENTENCE = ['the body', 'they']
 
 # Define possible determiners (and their associated probability)
-DETERMINERS = ["the", "your", "their"]
-DETERMINERS_PROP = [0.3, 0.5, 0.2]
+# NOTE: removing the "their" determiner option (see reason explained below
+# PAIR_ENHANCE_TEXT_1CMPNT)
+DETERMINERS = ["the", "your"]
+DETERMINERS_PROP = [0.5, 0.5]
 
 # Define possible transitions between sentences/pieces of description (and their
 # associated probability)
@@ -500,8 +589,9 @@ PAIR_TEXT_TRANSITIONS_PROP = [0.2, 0.2, 0.2, 0.2, 0.2]
 # Caution when defining template sentences:
 # - Template sentences must be defined for every eligible interpretation
 #     (including super-paircode interpretations)
-# - When necessary, use the words "your"/"yourself"; those will be replaced by
-#     their counterpart at processing time, depending on the chosen determiner.
+# - (? TODO: working??) When necessary, use the words "your"/"yourself"; those
+#     will be replaced by their counterpart at processing time, depending on the
+#     chosen determiner.
 # - Do not use random.choice in the definition of template sentences:
 #     random.choice will be executed only once, when launching the program.
 #     Thus, the same chosen option would be applied systematically, for all pair
@@ -510,7 +600,17 @@ PAIR_TEXT_TRANSITIONS_PROP = [0.2, 0.2, 0.2, 0.2, 0.2]
 # Interpretations that can be worded in 1 or 2-component sentences at random
 # ADD_PAIRCODE_KIND, ADD_SUPER_PAIRCODE: add interpretations if there are some new 
 # (currently, this holds only for distance paircodes)
-PAIR_OK_FOR_1CMPNT_OR_2CMPNTS = [f'{PAIR_INTPTTN_PREFIX}{k}' for k in PAIRCODE_OPERATORS_VALUES["pair_distance"]["category_names"]] # ADD_PAIRCODE_KIND; ADD_SUPER_PAIRCODE
+PAIR_OK_FOR_1CMPNT_OR_2CMPNTS = [f'{PAIR_INTPTTN_PREFIX}{k}' for k in PAIRCODE_OPERATORS_VALUES["pair_distance"]["category_names"]] + \
+                                [f'{PAIR_INTPTTN_PREFIX}touch']
+
+# Interpretations for which template sentences do not use the corresponding body
+# part (eg. because there is a unique joint set associated to that paircode)
+# ADD_PAIRCODE_KIND, ADD_SUPER_PAIRCODE: add interpretations if there are some new 
+PAIR_JOINT_LESS_INTPTT = [f'{PAIR_INTPTTN_PREFIX}{k}' for k in PAIRCODE_OPERATORS_VALUES["pair_bodyInclineX"]["category_names"]] + \
+                         [f'{PAIR_INTPTTN_PREFIX}{k}' for k in PAIRCODE_OPERATORS_VALUES["pair_bodyInclineY"]["category_names"]] + \
+                         [f'{PAIR_INTPTTN_PREFIX}{k}' for k in PAIRCODE_OPERATORS_VALUES["pair_bodyInclineZ"]["category_names"]] + \
+                         [f'{PAIR_INTPTTN_PREFIX}{k}' for k in PAIRCODE_OPERATORS_VALUES["pair_relativeRotX"]["category_names"]] + \
+                         [f'{PAIR_INTPTTN_PREFIX}{k}' for k in PAIRCODE_OPERATORS_VALUES["pair_relativeRotY"]["category_names"]]
 
 # list of verbs which can be easily factorized or ommitted because they do not
 # carry direction information
@@ -568,10 +668,7 @@ PAIR_ENHANCE_TEXT_1CMPNT = {
         ['<move> %s more to the back', '<move> %s backward', '<bring> %s more to the back', '<bring> %s backward', '<swing> %s to the back'],
     'straighten':
         ['<straighten> %s', '<extend> %s', '<stretch> %s', '<unbend> completely %s', '<flatten> %s'],
-    # NOTE: a condition on the rotation verbs such as face/rotate/turn is used
-    # in correcting.py to perfect the formulation. If adding a rotation verb,
-    # please think of updating correcting.py accordingly (function
-    # get_global_rotation_sentence())
+    # ---- body rotation
     'around':
         ['<turn> around completely', '<face> the opposite direction', '<turn> to the other side', '<spin> to face the opposite direction', '<rotate> by 180 degrees'],
     'around to the right':
@@ -586,8 +683,61 @@ PAIR_ENHANCE_TEXT_1CMPNT = {
         ['<turn> a quarter to the left', '<rotate> 90 degrees to the left'],
     'around to the left':
         ['<turn> around to the left', '<turn> to the left', '<turn> left', '<spin> left'] + [f'<{v}> {a}' for v in ['turn', 'rotate'] for a in ['anti-clockwise', 'counter-clockwise', 'left']],
-    # ADD_PAIRCODE_KIND: add template sentences for new interpretations if any 
+    # ---- body inclination
+    "body lean left more":
+        ["<bend> more leftwards", "<bend> more to the left", "<lean> leftwards", "<lean> towards the left side more"],
+    "body lean left slightly more":
+        ["<bend> a bit more to the left", "<bend> slightly leftwards", "<lean> slightly more to the left", "<lean> leftwards a bit more"],
+    "body lean right more":
+        ["<bend> more rightwards", "<bend> more to the right", "<lean> rightwards", "<lean> towards the right side more"],
+    "body lean right slightly more":
+        ["<bend> a bit moreto the right", "<bend> rightwards a little", "<lean> to the right slightly more", "<lean> a bit rightwards"],
+    "body incline backward more":
+        ["<bend> backwards more", "<lean> backwards", "<lean> back more", "<incline> backwards"],
+    "body incline backward slightly more":
+        ["<bend> backwards slightly", "<lean> backwards a bit", "<lean> back slightly", "<incline> backwards a little"],
+    "body incline forward more":
+        ["<bend> forwards more", "<lean> forwards", "<lean> forward more", "<incline> forwards", "<hunch> over", "<bend> over"],
+    "body incline forward slightly more":
+        ["<bend> forwards a little", "<lean> forwards slightly", "<lean> a bit forward", "<incline> forward slightly"],
+    "body twist right more":
+        ["<twist> rightwards", "<twist> more to the right", "<turn> more to the right", "<pivot> rightwards", "<rotate> to the right"],
+    "body twist right slightly more":
+        ["<twist> slightly rightwards", "<twist> a little more to the right", "<turn> slightly to the right", "<pivot> rightwards a bit", "<rotate> a little to the right"],
+    "body twist left more":
+        ["<twist> leftwards", "<twist> more to the left", "<turn> leftwards", "<pivot> to the left", "<rotate> leftwards"],
+    "body twist left slightly more":
+        ["<twist> a little leftwards", "<twist> slightly more to the left", "<turn> leftwards a bit", "<pivot> to the left a little", "<rotate> slightly to the left"],
+    # ---- special case for the head;
+    "head incline backward more":
+        ["<move> your chin away from your chest", "<tilt> your head backwards", "<tilt> your head outwards", "<incline> your crown towards the back"],
+    "head incline forward more":
+        ["<tuck> your chin to your chest", "<move> your chin more towards your chest", "<tilt> your head inwards"],
+    "head turn right more":
+        ["<look> more to the right", "<turn> your head rightwards", "<look> more rightwards", "<turn> your head more to the right"],
+    "head turn right slightly more":
+        ["<look> slightly more to the right", "<turn> your head rightwards a little", "<look> a bit more rightwards", "<turn> your head slightly more to the right"],
+    "head turn left more":
+        ["<look> more to the left", "<turn> your head leftwards", "<look> more leftwards", "<turn> your head more to the left"],
+    "head turn left slightly more":
+        ["<look> a little more to the left", "<turn> your head leftwards slightly", "<look> slightly more leftwards", "<turn> your head a little more to the left"],
+    # ---- contact
+    "touch": # subject if plural (eg. the knees, the hands)
+        ["<make> %s touch each other", "<move> %s so they touch", "<make> %s brush each other", "<bring> %s in contact"],
+    # ADD_PAIRCODE_KIND
     # ADD_SUPER_PAIRCODE
+    # * add template sentences for new interpretations if any
+    # * don't forget to treat the conjugation of new verbs in posescript/utils.py
+    # * conditions on verbs applying to the generic stance, such as
+    #   face/rotate/turn is used in correcting.py to perfect the formulation. If
+    #   adding such a verb, please think of updating correcting.py accordingly
+    #   (function get_global_rotation_sentence()) NOTE: it only works because
+    #   such cases are currently treated independently (sentence added
+    #   separately at the beginning of the description for general rotation
+    #   instruction).
+    #   # NOTE: to avoid any problem for general stance regarding the body or
+    #   head inclination, a current patch consists in using the 'their'
+    #   determiner.
 }
 MODIFIER_ENHANCE_TEXT_1CMPNT = {f'{PAIR_INTPTTN_PREFIX}{k}':v for k,v in PAIR_ENHANCE_TEXT_1CMPNT.items()}
 
@@ -601,7 +751,15 @@ PAIR_ENHANCE_TEXT_2CMPNTS = {
         ['<move> %s a bit closer to %s', '<move> %s closer to %s a bit', '<reduce> slightly the distance between %s and %s', '<tuck> %s slightly into %s', '<move> %s closer to %s slightly', '<pull> %s slightly closer to %s', '<bring> %s slightly more towards %s'],
     'closer':
         ['<move> %s closer to %s', '<tuck> %s into %s', '<pull> %s closer to %s', '<bring> %s to %s'],
-    # ADD_PAIRCODE_KIND: add template sentences for new interpretations if any 
+    "touch":
+        ["<make> %s touch %s", "<bring> %s in contact with %s", "<make> contact between %s and %s"],
+        # NOTE: the option "<touch> %s with %s" would need to be modified into something like "<touch> %{s2} with %{s1}"
+        # so as not to end up with "touch the hand with the belly", but to have instead "touch the belly with the hand".
+        # However, this kind of trick is only possible using the ".format" paradigm, not the "%"-formatting...
+        # So possible solutions are: (1) to ignore this option, (2) to treat it specifically in the pipeline, (3) to replace all %s formatting to .format() (may be a problem, since posecodes use both for different goals)
+    # ADD_PAIRCODE_KIND
     # ADD_SUPER_PAIRCODE
+    # * add template sentences for new interpretations if any
+    # * don't forget to treat the conjugation of new verbs in posescript/utils
 }
-MODIFIER_ENHANCE_TEXT_2CMPNT = {f'{PAIR_INTPTTN_PREFIX}{k}':v for k,v in PAIR_ENHANCE_TEXT_2CMPNTS.items()}
+MODIFIER_ENHANCE_TEXT_2CMPNTS = {f'{PAIR_INTPTTN_PREFIX}{k}':v for k,v in PAIR_ENHANCE_TEXT_2CMPNTS.items()}

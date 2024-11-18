@@ -42,12 +42,14 @@ def process_img(img):
 ### SETUP: load data, models...
 ################################################################################
 
-device = 'cpu'
+DEVICE = 'cpu'
 
 
 @st.cache_resource
-def setup_models(model_paths, checkpoint, _load_model_func):
+def setup_models(model_paths, checkpoint, _load_model_func, device=None):
     
+    device = device if device else DEVICE
+
     # load models
     models = []
     tokenizer_names = []
@@ -72,7 +74,7 @@ def setup_body_model():
                        bm_fname = config.NEUTRAL_BM,
                        num_betas = config.n_betas)
     body_model.eval()
-    body_model.to(device)
+    body_model.to(DEVICE)
     return body_model
 
 
@@ -112,7 +114,7 @@ def precompute_posescript_pose_features(data_version, split_for_research, _model
     batch_size = 32
     
     # create dataset
-    dataset = data.PoseScript(version=data_version, split=split_for_research, tokenizer_name=None)
+    dataset = data.PoseScript(version=data_version, split=split_for_research, tokenizer_name=None, num_body_joints=_model.pose_encoder.num_body_joints)
     data_loader = torch.utils.data.DataLoader(
         dataset, sampler=None, shuffle=False,
         batch_size=batch_size,
@@ -125,7 +127,7 @@ def precompute_posescript_pose_features(data_version, split_for_research, _model
     poses_features = torch.zeros(len(dataset), _model.latentD)
     pose_dataIDs = torch.zeros(len(dataset))
     for i, batch in tqdm(enumerate(data_loader)):
-        poses = batch['pose'].to(device)
+        poses = batch['pose'].to(DEVICE)
         with torch.inference_mode():
             pfeat = _model.pose_encoder(poses)
             poses_features[i*batch_size:i*batch_size+len(poses)] = pfeat
@@ -140,7 +142,7 @@ def precompute_posefix_pair_features(data_version, split_for_research, _model):
     batch_size = 32
     
     # create dataset
-    dataset = data.PoseFix(version=data_version, split=split_for_research, tokenizer_name=None)
+    dataset = data.PoseFix(version=data_version, split=split_for_research, tokenizer_name=None, num_body_joints=_model.pose_encoder.num_body_joints)
     data_loader = torch.utils.data.DataLoader(
         dataset, sampler=None, shuffle=False,
         batch_size=batch_size,
@@ -153,8 +155,8 @@ def precompute_posefix_pair_features(data_version, split_for_research, _model):
     pairs_features = torch.zeros(len(dataset), _model.latentD)
     pair_dataIDs = torch.zeros(len(dataset))
     for i, batch in tqdm(enumerate(data_loader)):
-        poses_A = batch['poses_A'].to(device)
-        poses_B = batch['poses_B'].to(device)
+        poses_A = batch['poses_A'].to(DEVICE)
+        poses_B = batch['poses_B'].to(DEVICE)
         with torch.inference_mode():
             pfeat = _model.encode_pose_pair(poses_A, poses_B)
             pairs_features[i*batch_size:i*batch_size+len(pfeat)] = pfeat
@@ -170,9 +172,9 @@ def precompute_text_features(data_version, split_for_research, _model, tokenizer
     
     # create dataset
     if "posescript" in data_version:
-        dataset = data.PoseScript(version=data_version, split=split_for_research, tokenizer_name=tokenizer_name, caption_index=0)
+        dataset = data.PoseScript(version=data_version, split=split_for_research, tokenizer_name=tokenizer_name, caption_index=0, num_body_joints=_model.pose_encoder.num_body_joints)
     elif "posefix" in data_version:
-        dataset = data.PoseFix(version=data_version, split=split_for_research, tokenizer_name=tokenizer_name, caption_index=0)
+        dataset = data.PoseFix(version=data_version, split=split_for_research, tokenizer_name=tokenizer_name, caption_index=0, num_body_joints=_model.pose_encoder.num_body_joints)
     else: raise ValueError
     
     data_loader = torch.utils.data.DataLoader(
@@ -187,8 +189,8 @@ def precompute_text_features(data_version, split_for_research, _model, tokenizer
     texts_features = torch.zeros(len(dataset), _model.latentD)
     text_dataIDs = torch.zeros(len(dataset))
     for i, batch in tqdm(enumerate(data_loader)):
-        caption_tokens = batch['caption_tokens'].to(device)
-        caption_lengths = batch['caption_lengths'].to(device)
+        caption_tokens = batch['caption_tokens'].to(DEVICE)
+        caption_lengths = batch['caption_lengths'].to(DEVICE)
         caption_tokens = caption_tokens[:,:caption_lengths.max()]
         with torch.inference_mode():
             tfeat = _model.encode_text(caption_tokens, caption_lengths)

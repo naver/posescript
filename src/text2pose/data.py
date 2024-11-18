@@ -1,6 +1,6 @@
 ##############################################################
 ## text2pose                                                ##
-## Copyright (c) 2022, 2023                                 ##
+## Copyright (c) 2022, 2023, 2024                           ##
 ## Institut de Robotica i Informatica Industrial, CSIC-UPC  ##
 ## and Naver Corporation                                    ##
 ## Licensed under the CC BY-NC-SA 4.0 license.              ##
@@ -41,7 +41,7 @@ PID_NAN = config.PID_NAN
 ################################################################################
 
 class GenericDataset():
-    def __init__(self, version, split, tokenizer_name, caption_index, cache=True, data_size=None):
+    def __init__(self, version, split, tokenizer_name, caption_index, num_body_joints=config.NB_INPUT_JOINTS, cache=True, data_size=None):
         super(GenericDataset, self).__init__()
 
         self.tokenizer_name = tokenizer_name
@@ -49,6 +49,7 @@ class GenericDataset():
         self.split = split
         assert type(caption_index) is int or caption_index in ['deterministic-mix', 'rand']
         self.caption_index = caption_index
+        self.num_body_joints = num_body_joints
         self.cache = cache
         self.data_size = data_size
         if self.data_size:
@@ -56,6 +57,7 @@ class GenericDataset():
 
         if cache:
             cache_file = config.cache_file_path[self.__class__.__name__.lower()].format(data_version=version, split=split, tokenizer=tokenizer_name)
+            print("Cache file:", cache_file)
             # in the case where tokenizer_name is None, try loading an
             # existing cache, based on another tokenizer_name
             if tokenizer_name is None:
@@ -134,8 +136,8 @@ class GenericDataset():
 
 class PoseStream(GenericDataset): # description-based dataset
 
-    def __init__(self, version="100k", split='train', tokenizer_name=None, cache=True, data_size=None): # must keep the tokenizer_name input due to class inheritance
-        super(PoseStream, self).__init__(version, split, None, 0, cache, data_size)
+    def __init__(self, version="100k", split='train', tokenizer_name=None, caption_index=0, num_body_joints=config.NB_INPUT_JOINTS, cache=True, data_size=None): # must keep some arguments due to class inheritance
+        super(PoseStream, self).__init__(version=version, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=num_body_joints, cache=cache, data_size=data_size)
         assert self.version == "100k", f"PoseStream not implemented for version: {self.version}"
 
 
@@ -167,7 +169,7 @@ class PoseStream(GenericDataset): # description-based dataset
             pose = self.get_pose(index)
             data_ids = self.dataIDs[index]
             
-        item = dict(pose=pose, data_ids=data_ids, indices=index)
+        item = dict(pose=pose[:self.num_body_joints], data_ids=data_ids, indices=index)
         return item
 
 
@@ -224,8 +226,9 @@ class PoseScript(GenericDataset): # description-based dataset
 
     def __init__(self, version="posescript-H2", split='train',
                     tokenizer_name='vocPSA2H2', caption_index='rand',
+                    num_body_joints=config.NB_INPUT_JOINTS,
                     cache=True, data_size=None, generated_pose_samples_path=None, posefix_format=False):
-        super(PoseScript, self).__init__(version, split, tokenizer_name, caption_index, cache, data_size)
+        super(PoseScript, self).__init__(version=version, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=num_body_joints, cache=cache, data_size=data_size)
 
         # NOTE: generated_pose_samples_path should be None if training on
         # original poses, otherwise it should be a path to a .pth file
@@ -306,11 +309,11 @@ class PoseScript(GenericDataset): # description-based dataset
             # overwrite variable content
             pose = self.get_generated_pose(index) # let cidx at None, to still select among generated samples for every automatic caption when training on human-written captions
 
-        item = dict(pose=pose, caption_tokens=caption_tokens, caption_lengths=caption_lengths, data_ids=data_ids, indices=index)
+        item = dict(pose=pose[:self.num_body_joints], caption_tokens=caption_tokens, caption_lengths=caption_lengths, data_ids=data_ids, indices=index)
 
         if self.posefix_format:
             # adapt item to PoseFix format: add pose A, update indices...
-            poses_A, pidA = T_POSE, PID_NAN
+            poses_A, pidA = T_POSE[:self.num_body_joints], PID_NAN
             item.update(dict(poses_A=poses_A, poses_B=item.pop("pose"), poses_A_ids=pidA, poses_B_ids=item["data_ids"], data_ids=f"{posescript_prefix}_{item['data_ids']}"))
 
         return item
@@ -395,8 +398,9 @@ class PoseFix(GenericDataset): # modifier-based dataset
 
     def __init__(self, version="posefix-H", split='train', 
                     tokenizer_name='vocPFAHPP', caption_index='rand',
+                    num_body_joints=config.NB_INPUT_JOINTS,
                     cache=True, data_size=None, posescript_format=False):
-        super(PoseFix, self).__init__(version, split, tokenizer_name, caption_index, cache, data_size)
+        super(PoseFix, self).__init__(version=version, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=num_body_joints, cache=cache, data_size=data_size)
 
         # will update item format if using the posescript format
         self.posescript_format = posescript_format
@@ -471,7 +475,7 @@ class PoseFix(GenericDataset): # modifier-based dataset
                 # padding
                 caption_tokens = torch.cat( (caption_tokens, self.tokenizer.pad_token_id * torch.ones( self.tokenizer.max_tokens-caption_lengths, dtype=caption_tokens.dtype) ), dim=0)
 
-        item = dict(poses_A=poses_A, poses_B=poses_B, caption_tokens=caption_tokens, caption_lengths=caption_lengths, poses_A_ids=poses_A_ids, poses_B_ids=poses_B_ids, data_ids=data_ids, indices=index)
+        item = dict(poses_A=poses_A[:self.num_body_joints], poses_B=poses_B[:self.num_body_joints], caption_tokens=caption_tokens, caption_lengths=caption_lengths, poses_A_ids=poses_A_ids, poses_B_ids=poses_B_ids, data_ids=data_ids, indices=index)
         
         if self.posescript_format:
             item.update(dict(pose=item.pop("poses_B"), data_ids=item.pop("poses_B_ids")))
@@ -489,8 +493,9 @@ class PoseMix(PoseFix): # also a modifier-based dataset
 
     def __init__(self, version="posemix-PSH2-PFH", split='train',
                     tokenizer_name='vocMixPSA2H2PFAH', caption_index='rand',
+                    num_body_joints=config.NB_INPUT_JOINTS,
                     cache=True, data_size=None):
-        super(PoseMix, self).__init__(version, split, tokenizer_name, caption_index, cache, data_size)       
+        super(PoseMix, self).__init__(version=version, split=split, tokenizer_name=tokenizer_name, caption_index=caption_index, num_body_joints=num_body_joints, cache=cache, data_size=data_size)
 
 
     def _load_data(self):
