@@ -49,7 +49,7 @@ OK_FOR_1CMPNT_OR_2CMPNTS_IDS = [POSECODE_INTPTT_NAME2ID[n] for n in OK_FOR_1CMPN
 ################################################################################
 
 def main(coords, joint_rotations_type="smplh", joint_rotations=None, shape_data=None,
-        load_contact_codes_file=None,
+        use_contact_codes=True, load_contact_codes_file=(None, False),
         save_dir=None, babel_info=False, simplified_captions=False,
         apply_transrel_ripple_effect=True, apply_stat_ripple_effect=True,
         random_skip=True, verbose=True, ret_type="dict"):
@@ -57,6 +57,7 @@ def main(coords, joint_rotations_type="smplh", joint_rotations=None, shape_data=
         coords: shape (nb_poses, nb_joints, 3)
         joint_rotations: shape (nb_poses, nb_joints, 3)
         shape_data: None | tensor of shape (nb_poses, nb_shape_coefficients)
+        use_contact_codes: boolean, telling whether to compute contact codes.
         load_contact_codes_file: (path to file, boolean) where the boolean tells
             whether to load the contact codes from file.
             Note: useful to compute contact codes only once (more efficient), if
@@ -93,7 +94,7 @@ def main(coords, joint_rotations_type="smplh", joint_rotations=None, shape_data=
                                                             verbose = verbose)
     
     # Add contact posecodes if possible
-    if joint_rotations is not None:
+    if use_contact_codes and joint_rotations is not None:
         if verbose: print("Adding contact posecodes...")
         if load_contact_codes_file[1]:
             posecodes_contact = torch.load(load_contact_codes_file[0])
@@ -321,6 +322,9 @@ def infer_posecodes(coords, p_queries, sp_queries, joint_rotations = None, verbo
     p_eligibility = {}
 
     for p_kind, p_operator in POSECODE_OPERATORS.items():
+        if p_operator.input_kind=="rotations" and joint_rotations is None:
+            # skip codes based on joint rotations if these are not given as input 
+            continue
         # evaluate posecodes
         val = p_operator.eval(p_queries[p_kind]["joint_ids"], coords if p_operator.input_kind=="coords" else joint_rotations)
         # to represent a bit human subjectivity, slightly randomize the
@@ -328,7 +332,9 @@ def infer_posecodes(coords, p_queries, sp_queries, joint_rotations = None, verbo
         # evaluations: add or subtract up to the maximum authorized random
         # offset to the measured values.
         val = p_operator.randomize(val)
-        # interprete the measured values
+		# interprete the measured values (convert interpretation ids (valid in
+		# the scope of the considered posecode operator) to global
+		# interpretation ids))
         p_intptt = p_operator.interprete(val) + p_queries[p_kind]["offset"]
         # infer posecode eligibility for description
         p_elig = torch.zeros(p_intptt.shape)
@@ -358,6 +364,10 @@ def infer_posecodes(coords, p_queries, sp_queries, joint_rotations = None, verbo
             # check if all the conditions on the elementary posecodes are met
             sp_col = torch.ones(nb_poses)
             for ep in w: # ep = (kind, joint_set_column, intptt_id) for the given elementary posecode
+                if ep[0] not in p_interpretations:
+                    # one of the conditional codes is not available 
+                    sp_col = torch.zeros(nb_poses)
+                    break # move on to the next way (alternative set of conditions)
                 sp_col = torch.logical_and(sp_col, (p_interpretations[ep[0]][:,ep[1]] == ep[2]))
             # all the ways to produce the super-posecodes must be compatible
             # (ie. no overwriting, one sucessful way is enough to produce the 
@@ -374,6 +384,9 @@ def infer_posecodes(coords, p_queries, sp_queries, joint_rotations = None, verbo
     for sp_ind, sp_id in enumerate(sp_queries):
         for w in sp_queries[sp_id]["required_posecodes"]:
             for ep in w: # ep = (kind, joint_set_column, intptt_id) for the given elementary posecode
+                if ep[0] not in p_interpretations:
+                    # code was not available to begin with; no need to change its eligibility 
+                    continue
                 # support-I
                 if ep[2] in p_queries[ep[0]]["support_intptt_ids_typeI"][ep[1]]:
                     # eligibility set to 0, independently of whether the super-

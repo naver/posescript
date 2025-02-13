@@ -98,7 +98,7 @@ def intptt_largest_magnitude(intptt1, intptt2):
 
 def main(pose_pairs, coords, global_rotation_change=None,
 		 joint_rotations_type="smplh", joint_rotations=None,
-		 load_contact_code_file=None,
+		 use_contact_codes=True, load_contact_code_file=(None, False),
 		 add_description_text_pieces=True, # eg. "the feet should be shoulder-width apart"
 		 save_dir=None, simplified_instructions=False,
 		 random_skip=True, verbose=True, ret_type="dict"):
@@ -106,7 +106,8 @@ def main(pose_pairs, coords, global_rotation_change=None,
 	pose_pairs: torch tensor, with elements giving local indices to (pose A, pose B)
 	coords: shape (nb_poses, nb_joints, 3)
 	joint_rotations: shape (nb_poses, nb_joints, 3)
-	load_contact_codes_file: (path to file, boolean) where the boolean tells
+	use_contact_codes: boolean, telling whether to compute contact codes.
+	load_contact_code_file: (path to file, boolean) where the boolean tells
             whether to load the contact codes from file.
             Note: useful to compute contact codes only once (more efficient), if
             generating several texts.
@@ -155,7 +156,7 @@ def main(pose_pairs, coords, global_rotation_change=None,
 															verbose = verbose)
 	
 	# Add contact posecodes if possible
-	if joint_rotations is not None:
+	if use_contact_codes and joint_rotations is not None:
 		if verbose: print("Adding contact codes...")
 		ta = time.time()
 		if load_contact_code_file[1]:
@@ -429,11 +430,16 @@ def infer_codes(pair_ids, coords, p_queries, sp_queries, pair_queries, spair_que
 
 	# infer elementary posecodes
 	for p_kind, p_operator in POSECODE_OPERATORS.items():
+		if p_operator.input_kind=="rotations" and joint_rotations is None:
+			# skip codes based on joint rotations if these are not given as input 
+			continue
 		# evaluate posecodes
 		val = p_operator.eval(p_queries[p_kind]["joint_ids"], coords if p_operator.input_kind=="coords" else joint_rotations)
 		# add some randomization to represent a bit human subjectivity
 		val = p_operator.randomize(val)
-		# interprete the measured values
+		# interprete the measured values (convert interpretation ids (valid in
+		# the scope of the considered posecode operator) to global
+		# interpretation ids))
 		p_intptt = p_operator.interprete(val) + p_queries[p_kind]["offset"]
 		# infer posecode eligibility for instruction
 		p_elig = torch.zeros(p_intptt.shape)
@@ -463,6 +469,10 @@ def infer_codes(pair_ids, coords, p_queries, sp_queries, pair_queries, spair_que
 				# check if all the conditions on the elementary posecodes are met
 				sp_col = torch.ones(nb_poses)
 				for ep in w: # ep = (kind, joint_set_column, intptt_id) for the given elementary posecode
+					if ep[0] not in p_interpretations:
+						# one of the conditional codes is not available 
+						sp_col = torch.zeros(nb_poses)
+						break # move on to the next way (alternative set of conditions)
 					sp_col = torch.logical_and(sp_col, (p_interpretations[ep[0]][:,ep[1]] == ep[2]))
 				# all the ways to produce the super-posecodes must be compatible
 				# (ie. no overwriting, one sucessful way is enough to produce the 
@@ -475,6 +485,9 @@ def infer_codes(pair_ids, coords, p_queries, sp_queries, pair_queries, spair_que
 
 	# infer elementary paircodes
 	for p_kind, p_operator in PAIRCODE_OPERATORS.items():
+		if p_operator.input_kind=="rotations" and joint_rotations is None:
+			# skip codes based on joint rotations if these are not given as input 
+			continue
 		# evaluate posecodes
 		val = p_operator.eval(pair_ids, pair_queries[p_kind]["joint_ids"], coords if p_operator.input_kind=="coords" else joint_rotations)
 		# add some randomization to represent a bit human subjectivity
@@ -510,6 +523,11 @@ def infer_codes(pair_ids, coords, p_queries, sp_queries, pair_queries, spair_que
 			sp_col = torch.ones(nb_pairs)
 			for ep in w: # ep = (kind, joint_set_column, intptt_id, side info) for the given elementary posecode/paircode
 				
+				if ep[0] not in pair_interpretations and ep[0] not in p_interpretations:
+					# one of the conditional codes is not available 
+					sp_col = torch.zeros(nb_poses)
+					break # move on to the next way (alternative set of conditions)
+
 				if 'pair' in ep[0]: # this is a paircode
 					if ep[3] == "direction":
 						# check that the pair has the correct interpretation
@@ -546,6 +564,10 @@ def infer_codes(pair_ids, coords, p_queries, sp_queries, pair_queries, spair_que
 		for w in spair_queries[sp_id]["required_codes"]:
 			for ep in w: # ep = (kind, joint_set_column, intptt_id, side info) for the given elementary paircode
 				
+				if ep[0] not in pair_interpretations and ep[0] not in p_interpretations:
+					# code was not available to begin with; no need to change its eligibility 
+					continue
+
 				# paircode
 				if 'pair' in ep[0]:
 					
